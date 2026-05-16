@@ -25,17 +25,21 @@ private:
 namespace rflcpp {
 template <>
 struct json_codec<Color> {
-    static void write(detail::json::writer& w, const Color& c) {
+    static nlohmann::json write(const Color& c) {
         std::ostringstream os;
         os << '#' << std::hex << std::setfill('0')
            << std::setw(2) << +c.r()
            << std::setw(2) << +c.g()
            << std::setw(2) << +c.b();
-        w.write_string(os.str());
+        return os.str();
     }
 
-    static result<Color> read(const detail::json::value& v, std::string_view path) {
-        if (v.k != detail::json::value::kind::string_ || v.s.size() != 7 || v.s[0] != '#')
+    static result<Color> read(const nlohmann::json& v, std::string_view path) {
+        if (!v.is_string())
+            return fail({error_kind::type_mismatch, "expected string", std::string{path}});
+        
+        std::string s = v.get<std::string>();
+        if (s.size() != 7 || s[0] != '#')
             return fail({error_kind::type_mismatch, "expected #rrggbb", std::string{path}});
 
         auto hex = [](char c) {
@@ -45,7 +49,7 @@ struct json_codec<Color> {
             return -1;
         };
         auto byte = [&](int off) -> int {
-            int hi = hex(v.s[off]), lo = hex(v.s[off + 1]);
+            int hi = hex(s[off]), lo = hex(s[off + 1]);
             return (hi < 0 || lo < 0) ? -1 : hi * 16 + lo;
         };
 

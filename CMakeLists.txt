@@ -31,6 +31,11 @@ option(RFLCPP_BUILD_DOCS     "Build rflcpp documentation"     OFF)
 option(RFLCPP_HEADER_ONLY    "Build rflcpp as a header-only target" OFF)
 option(RFLCPP_INSTALL        "Generate install rules for rflcpp"     ON)
 
+option(RFLCPP_ENABLE_JSON "Enable JSON support using nlohmann/json" ON)
+option(RFLCPP_ENABLE_XML  "Enable XML support using pugixml"       OFF)
+option(RFLCPP_ENABLE_YAML "Enable YAML support using yaml-cpp"    OFF)
+option(RFLCPP_ENABLE_TOML "Enable TOML support using tomlplusplus" OFF)
+
 # ----------------------------------------------------------------------------
 # Reflection feature detection (mandatory)
 # ----------------------------------------------------------------------------
@@ -44,6 +49,59 @@ option(RFLCPP_INSTALL        "Generate install rules for rflcpp"     ON)
 include(CheckCXXSourceCompiles)
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
+include(FetchContent)
+
+# ----------------------------------------------------------------------------
+# Dependencies
+# ----------------------------------------------------------------------------
+
+if(RFLCPP_ENABLE_JSON)
+    find_package(nlohmann_json QUIET)
+    if(NOT nlohmann_json_FOUND)
+        FetchContent_Declare(
+            nlohmann_json
+            GIT_REPOSITORY https://github.com/nlohmann/json.git
+            GIT_TAG v3.11.3
+        )
+        FetchContent_MakeAvailable(nlohmann_json)
+    endif()
+endif()
+
+if(RFLCPP_ENABLE_XML)
+    find_package(pugixml QUIET)
+    if(NOT pugixml_FOUND)
+        FetchContent_Declare(
+            pugixml
+            GIT_REPOSITORY https://github.com/zeux/pugixml.git
+            GIT_TAG v1.14
+        )
+        FetchContent_MakeAvailable(pugixml)
+    endif()
+endif()
+
+if(RFLCPP_ENABLE_YAML)
+    find_package(yaml-cpp QUIET)
+    if(NOT yaml-cpp_FOUND)
+        FetchContent_Declare(
+            yaml-cpp
+            GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+            GIT_TAG 0.8.0
+        )
+        FetchContent_MakeAvailable(yaml-cpp)
+    endif()
+endif()
+
+if(RFLCPP_ENABLE_TOML)
+    find_package(tomlplusplus QUIET)
+    if(NOT tomlplusplus_FOUND)
+        FetchContent_Declare(
+            tomlplusplus
+            GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
+            GIT_TAG v3.4.0
+        )
+        FetchContent_MakeAvailable(tomlplusplus)
+    endif()
+endif()
 
 set(_rflcpp_reflection_test_code [=[
 #if __has_include(<meta>)
@@ -122,13 +180,25 @@ set(RFLCPP_PUBLIC_HEADERS
     include/rflcpp/derive.hpp
     include/rflcpp/enum_meta.hpp
     include/rflcpp/error.hpp
-    include/rflcpp/json.hpp
     include/rflcpp/policy.hpp
     include/rflcpp/reflect.hpp
     include/rflcpp/result.hpp
     include/rflcpp/schema.hpp
     include/rflcpp/validation.hpp
 )
+
+if(RFLCPP_ENABLE_JSON)
+    list(APPEND RFLCPP_PUBLIC_HEADERS include/rflcpp/json.hpp)
+endif()
+if(RFLCPP_ENABLE_XML)
+    list(APPEND RFLCPP_PUBLIC_HEADERS include/rflcpp/xml.hpp)
+endif()
+if(RFLCPP_ENABLE_YAML)
+    list(APPEND RFLCPP_PUBLIC_HEADERS include/rflcpp/yaml.hpp)
+endif()
+if(RFLCPP_ENABLE_TOML)
+    list(APPEND RFLCPP_PUBLIC_HEADERS include/rflcpp/toml.hpp)
+endif()
 
 # rflcpp is largely header-only; the few cpp files here exist so the library
 # has a real translation unit to attach version metadata and the (small)
@@ -181,6 +251,26 @@ endif()
 
 # Propagate the reflection-enabling flag to every consumer of rflcpp.
 target_compile_options(rflcpp ${RFLCPP_SCOPE} ${RFLCPP_REFLECTION_FLAG})
+
+if(RFLCPP_ENABLE_JSON)
+    target_compile_definitions(rflcpp ${RFLCPP_SCOPE} RFLCPP_ENABLE_JSON)
+    target_link_libraries(rflcpp ${RFLCPP_SCOPE} $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>)
+endif()
+
+if(RFLCPP_ENABLE_XML)
+    target_compile_definitions(rflcpp ${RFLCPP_SCOPE} RFLCPP_ENABLE_XML)
+    target_link_libraries(rflcpp ${RFLCPP_SCOPE} $<BUILD_INTERFACE:pugixml>)
+endif()
+
+if(RFLCPP_ENABLE_YAML)
+    target_compile_definitions(rflcpp ${RFLCPP_SCOPE} RFLCPP_ENABLE_YAML)
+    target_link_libraries(rflcpp ${RFLCPP_SCOPE} $<BUILD_INTERFACE:yaml-cpp>)
+endif()
+
+if(RFLCPP_ENABLE_TOML)
+    target_compile_definitions(rflcpp ${RFLCPP_SCOPE} RFLCPP_ENABLE_TOML)
+    target_link_libraries(rflcpp ${RFLCPP_SCOPE} $<BUILD_INTERFACE:tomlplusplus::tomlplusplus>)
+endif()
 
 # Warnings
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

@@ -149,12 +149,18 @@ consteval bool has_default_value() {
 }
 
 template <class T, class... Attrs>
-consteval T default_value() {
+constexpr T default_value() {
     T out{};
     (
         [&]<class A>() {
-            if constexpr (requires(A* p) { default_value_for(p); })
-                out = T{default_value_for(static_cast<A*>(nullptr))};
+            if constexpr (requires(A* p) { default_value_for(p); }) {
+                auto val = default_value_for(static_cast<A*>(nullptr));
+                if constexpr (requires { val.view(); }) {
+                    out = T{val.view()};
+                } else {
+                    out = T{val};
+                }
+            }
         }.template operator()<Attrs>(),
         ...
     );

@@ -1,45 +1,42 @@
-// rflcpp/json.hpp - JSON serialization using nlohmann/json.
+// rflcpp/yaml.hpp - YAML serialization using yaml-cpp.
 // SPDX-License-Identifier: MIT
 
 #pragma once
 
-#ifdef RFLCPP_ENABLE_JSON
+#ifdef RFLCPP_ENABLE_YAML
 
-#include <nlohmann/json.hpp>
+#include <yaml-cpp/yaml.h>
 #include <rflcpp/detail/serialization_common.hpp>
 #include <rflcpp/error.hpp>
 #include <rflcpp/result.hpp>
 #include <rflcpp/validation.hpp>
 
-#include <algorithm>
-#include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <variant>
-#include <vector>
 
 namespace rflcpp {
 
-using njson = nlohmann::json;
-
-struct json_options {
-    int indent = -1;
+struct yaml_options {
+    /// YAML indentation.
+    int indent = 2;
 };
 
-/// Specialize this to add custom-type support for `to_json` / `from_json`.
+/// Specialize this to add custom-type support for `to_yaml` / `from_yaml`.
 template <class T, class = void>
-struct json_codec;
+struct yaml_codec;
 
-namespace detail::json {
+namespace detail::yaml {
 
 using namespace rflcpp::detail::serialization;
 
 template <class T>
-njson write_dispatch(const T& v);
+YAML::Node write_dispatch(const T& v);
 
 template <class T>
-void write_members(njson& j, const T& obj) {
+void write_members(YAML::Node& node, const T& obj) {
     using U = std::remove_cvref_t<T>;
 
     if constexpr (base_count_of<U>() > 0 &&
@@ -51,11 +48,9 @@ void write_members(njson& j, const T& obj) {
                 using B = typename [: std::meta::type_of(base) :];
                 const B& base_ref = static_cast<const B&>(obj);
                 if constexpr (base_policy<U>::mode == base_mode::flatten) {
-                    write_members(j, base_ref);
+                    write_members(node, base_ref);
                 } else if constexpr (base_policy<U>::mode == base_mode::nested) {
-                    njson inner_j = njson::object();
-                    write_members(inner_j, base_ref);
-                    j[std::string{type_name_of<B>()}] = std::move(inner_j);
+                    node[std::string{rflcpp::type_name_of<B>()}] = write_dispatch(base_ref);
                 }
             }(), ...);
         }(std::make_index_sequence<B_COUNT>{});
@@ -69,7 +64,7 @@ void write_members(njson& j, const T& obj) {
         if constexpr (flatten_v<FT>()) {
             auto const& inner = unwrap_ref<FT>(field_ref);
             if constexpr (reflectable_class<std::remove_cvref_t<decltype(inner)>>)
-                write_members(j, inner);
+                write_members(node, inner);
             return;
         }
 
@@ -88,33 +83,33 @@ void write_members(njson& j, const T& obj) {
         std::string key = effective_key<U, FT>(member_name);
 
         if constexpr (sensitive_v<FT>()) {
-            j[key] = "***";
+            node[key] = "***";
         } else {
-            j[key] = detail::json::write_dispatch(inner);
+            node[key] = detail::yaml::write_dispatch(inner);
         }
     });
 }
 
 template <class Variant>
-njson write_variant(const Variant& v) {
+YAML::Node write_variant(const Variant& v) {
     constexpr auto tagging = variant_policy<Variant>::tagging;
-    return std::visit([&](auto const& alt) -> njson {
+    return std::visit([&](auto const& alt) -> YAML::Node {
         using A = std::remove_cvref_t<decltype(alt)>;
         if constexpr (tagging == variant_tagging::external) {
-            njson j = njson::object();
-            j[std::string{type_name_of<A>()}] = write_dispatch(alt);
-            return j;
+            YAML::Node node;
+            node[std::string{rflcpp::type_name_of<A>()}] = write_dispatch(alt);
+            return node;
         } else if constexpr (tagging == variant_tagging::internal) {
-            njson j = njson::object();
-            j[std::string{variant_policy<Variant>::tag_field}] = std::string{type_name_of<A>()};
-            if constexpr (reflectable_class<A>) write_members(j, alt);
-            else j["value"] = write_dispatch(alt);
-            return j;
+            YAML::Node node;
+            node[std::string{variant_policy<Variant>::tag_field}] = std::string{rflcpp::type_name_of<A>()};
+            if constexpr (reflectable_class<A>) write_members(node, alt);
+            else node["value"] = write_dispatch(alt);
+            return node;
         } else if constexpr (tagging == variant_tagging::adjacent) {
-            njson j = njson::object();
-            j[std::string{variant_policy<Variant>::tag_field}] = std::string{type_name_of<A>()};
-            j[std::string{variant_policy<Variant>::content_field}] = write_dispatch(alt);
-            return j;
+            YAML::Node node;
+            node[std::string{variant_policy<Variant>::tag_field}] = std::string{rflcpp::type_name_of<A>()};
+            node[std::string{variant_policy<Variant>::content_field}] = write_dispatch(alt);
+            return node;
         } else { // untagged
             return write_dispatch(alt);
         }
@@ -122,11 +117,11 @@ njson write_variant(const Variant& v) {
 }
 
 template <class T>
-njson write_dispatch(const T& v) {
+YAML::Node write_dispatch(const T& v) {
     using U = std::remove_cvref_t<T>;
 
-    if constexpr (requires { json_codec<U>::write(v); }) {
-        return json_codec<U>::write(v);
+    if constexpr (requires { yaml_codec<U>::write(v); }) {
+        return yaml_codec<U>::write(v);
     }
     else if constexpr (requires { v.get(); typename U::value_type;
                                   requires std::same_as<U,
@@ -138,53 +133,53 @@ njson write_dispatch(const T& v) {
     }
     else if constexpr (optional_like<U>) {
         if (v.has_value()) return write_dispatch(*v);
-        return nullptr;
+        return YAML::Node(YAML::NodeType::Null);
     }
     else if constexpr (variant_like<U>) {
         return write_variant(v);
     }
     else if constexpr (enum_like<U>) {
         if constexpr (rflcpp::enum_flags_policy<U>::is_flags) {
+            YAML::Node node;
             auto names = rflcpp::enum_flag_names(v);
-            njson j = njson::array();
-            for (auto const& n : names) j.push_back(n);
-            return j;
+            for (auto const& n : names) node.push_back(std::string{n});
+            return node;
         } else {
-            return std::string{rflcpp::enum_name(v)};
+            return YAML::Node(std::string{rflcpp::enum_name(v)});
         }
     }
     else if constexpr (boolean_like<U>) {
-        return bool(v);
+        return YAML::Node(bool(v));
     }
     else if constexpr (numeric_like<U>) {
-        return v;
+        return YAML::Node(v);
     }
     else if constexpr (string_like<U>) {
-        return std::string{v};
+        return YAML::Node(std::string{v});
     }
     else if constexpr (map_like<U>) {
-        njson j = njson::object();
-        for (auto const& [k, val] : v) j[std::string{k}] = write_dispatch(val);
-        return j;
+        YAML::Node node;
+        for (auto const& [k, val] : v) node[std::string{k}] = write_dispatch(val);
+        return node;
     }
     else if constexpr (sequence_like<U>) {
-        njson j = njson::array();
-        for (auto const& e : v) j.push_back(write_dispatch(e));
-        return j;
+        YAML::Node node;
+        for (auto const& e : v) node.push_back(write_dispatch(e));
+        return node;
     }
     else if constexpr (reflectable_class<U>) {
-        njson j = njson::object();
-        write_members(j, v);
-        return j;
+        YAML::Node node;
+        write_members(node, v);
+        return node;
     }
-    return nullptr;
+    return YAML::Node(YAML::NodeType::Null);
 }
 
 template <class T>
-result<T> read_dispatch(const njson& j, std::string_view path);
+result<T> read_dispatch(const YAML::Node& node, std::string_view path);
 
 template <class Owner, class FieldType, class Out>
-void read_member(const njson& parent, std::string_view member_name,
+void read_member(const YAML::Node& parent, std::string_view member_name,
                  Out& out_field, std::string_view path,
                  std::optional<error>& failure)
 {
@@ -192,19 +187,20 @@ void read_member(const njson& parent, std::string_view member_name,
     if (failure || skip_on_read_v<F>()) return;
 
     std::string canonical = effective_key<Owner, F>(member_name);
-    auto it = parent.find(canonical);
-    if (it == parent.end()) {
+    YAML::Node found = parent[canonical];
+    if (!found.IsDefined()) {
         constexpr auto ap = aliases_pair<F>();
         for (std::size_t i = 0; i < ap.second; ++i) {
-            it = parent.find(std::string{ap.first[i]});
-            if (it != parent.end()) break;
+            std::string alias{ap.first[i]};
+            found = parent[alias];
+            if (found.IsDefined()) break;
         }
     }
 
     auto& inner = unwrap_ref<F>(out_field);
     using InnerT = std::remove_cvref_t<decltype(inner)>;
 
-    if (it == parent.end()) {
+    if (!found.IsDefined()) {
         if constexpr (has_default_v<F>()) {
             inner = default_v<F>();
             return;
@@ -216,13 +212,13 @@ void read_member(const njson& parent, std::string_view member_name,
         return;
     }
 
-    auto res = read_dispatch<InnerT>(*it, path);
+    auto res = read_dispatch<InnerT>(found, path);
     if (!res) failure = res.error();
     else      inner = std::move(*res);
 }
 
 template <class T>
-void read_members(const njson& j, T& obj, std::string_view path, std::optional<error>& failure) {
+void read_members(const YAML::Node& node, T& obj, std::string_view path, std::optional<error>& failure) {
     using U = std::remove_cvref_t<T>;
 
     if constexpr (base_count_of<U>() > 0 &&
@@ -235,12 +231,11 @@ void read_members(const njson& j, T& obj, std::string_view path, std::optional<e
                 using B = typename [: std::meta::type_of(base) :];
                 B& base_ref = static_cast<B&>(obj);
                 if constexpr (base_policy<U>::mode == base_mode::flatten) {
-                    read_members(j, base_ref, path, failure);
+                    read_members(node, base_ref, path, failure);
                 } else if constexpr (base_policy<U>::mode == base_mode::nested) {
-                    std::string key{type_name_of<B>()};
-                    auto it = j.find(key);
-                    if (it != j.end()) {
-                        auto res = read_dispatch<B>(*it, path);
+                    std::string key{rflcpp::type_name_of<B>()};
+                    if (auto found = node[key]) {
+                        auto res = read_dispatch<B>(found, path);
                         if (!res) failure = res.error();
                         else      base_ref = std::move(*res);
                     }
@@ -255,28 +250,22 @@ void read_members(const njson& j, T& obj, std::string_view path, std::optional<e
         if constexpr (flatten_v<FT>()) {
             auto& inner = unwrap_ref<FT>(field_ref);
             if constexpr (reflectable_class<std::remove_cvref_t<decltype(inner)>>)
-                read_members(j, inner, path, failure);
+                read_members(node, inner, path, failure);
         } else {
-            read_member<U, FT>(j, member_name, field_ref, path, failure);
+            read_member<U, FT>(node, member_name, field_ref, path, failure);
         }
     });
 }
 
 template <class Variant>
-result<Variant> read_variant(const njson& j, std::string_view path) {
+result<Variant> read_variant(const YAML::Node& node, std::string_view path) {
     constexpr auto tagging = variant_policy<Variant>::tagging;
 
-    auto try_read_alt = [&]<class Alt>() -> std::optional<result<Variant>> {
-        auto res = read_dispatch<Alt>(j, path);
-        if (res) return Variant(std::move(*res));
-        return std::nullopt;
-    };
-
     if constexpr (tagging == variant_tagging::external) {
-        if (!j.is_object() || j.size() != 1)
-            return fail({error_kind::type_mismatch, "expected object with single key for external variant", std::string{path}});
-        std::string key = j.begin().key();
-        const auto& val = j.begin().value();
+        if (!node.IsMap() || node.size() != 1)
+            return fail({error_kind::type_mismatch, "expected map with single key for external variant", std::string{path}});
+        std::string key = node.begin()->first.as<std::string>();
+        const YAML::Node& val = node.begin()->second;
         std::optional<result<Variant>> found;
         [&]<std::size_t... Is>(std::index_sequence<Is...>) {
             ([&] {
@@ -293,19 +282,18 @@ result<Variant> read_variant(const njson& j, std::string_view path) {
         return fail({error_kind::type_mismatch, "unknown variant tag: " + key, std::string{path}});
     }
     else if constexpr (tagging == variant_tagging::internal) {
-        if (!j.is_object()) return fail({error_kind::type_mismatch, "expected object for internal variant", std::string{path}});
+        if (!node.IsMap()) return fail({error_kind::type_mismatch, "expected map for internal variant", std::string{path}});
         std::string tag_field{variant_policy<Variant>::tag_field};
-        auto it = j.find(tag_field);
-        if (it == j.end() || !it->is_string())
+        if (!node[tag_field])
             return fail({error_kind::missing_field, "missing tag field '" + tag_field + "'", std::string{path}});
-        std::string tag = it->get<std::string>();
+        std::string tag = node[tag_field].as<std::string>();
         std::optional<result<Variant>> found;
         [&]<std::size_t... Is>(std::index_sequence<Is...>) {
             ([&] {
                 if (found) return;
                 using Alt = std::variant_alternative_t<Is, Variant>;
                 if (tag == type_name_of<Alt>()) {
-                    auto res = read_dispatch<Alt>(j, path);
+                    auto res = read_dispatch<Alt>(node, path);
                     if (res) found = Variant(std::move(*res));
                     else     found = fail(res.error());
                 }
@@ -315,23 +303,21 @@ result<Variant> read_variant(const njson& j, std::string_view path) {
         return fail({error_kind::type_mismatch, "unknown variant tag: " + tag, std::string{path}});
     }
     else if constexpr (tagging == variant_tagging::adjacent) {
-        if (!j.is_object()) return fail({error_kind::type_mismatch, "expected object for adjacent variant", std::string{path}});
+        if (!node.IsMap()) return fail({error_kind::type_mismatch, "expected map for adjacent variant", std::string{path}});
         std::string tag_field{variant_policy<Variant>::tag_field};
         std::string content_field{variant_policy<Variant>::content_field};
-        auto it_tag = j.find(tag_field);
-        auto it_val = j.find(content_field);
-        if (it_tag == j.end() || !it_tag->is_string())
+        if (!node[tag_field])
             return fail({error_kind::missing_field, "missing tag field '" + tag_field + "'", std::string{path}});
-        if (it_val == j.end())
+        if (!node[content_field])
             return fail({error_kind::missing_field, "missing content field '" + content_field + "'", std::string{path}});
-        std::string tag = it_tag->get<std::string>();
+        std::string tag = node[tag_field].as<std::string>();
         std::optional<result<Variant>> found;
         [&]<std::size_t... Is>(std::index_sequence<Is...>) {
             ([&] {
                 if (found) return;
                 using Alt = std::variant_alternative_t<Is, Variant>;
                 if (tag == type_name_of<Alt>()) {
-                    auto res = read_dispatch<Alt>(*it_val, path);
+                    auto res = read_dispatch<Alt>(node[content_field], path);
                     if (res) found = Variant(std::move(*res));
                     else     found = fail(res.error());
                 }
@@ -346,7 +332,7 @@ result<Variant> read_variant(const njson& j, std::string_view path) {
             ([&] {
                 if (found) return;
                 using Alt = std::variant_alternative_t<Is, Variant>;
-                auto res = read_dispatch<Alt>(j, path);
+                auto res = read_dispatch<Alt>(node, path);
                 if (res) found = Variant(std::move(*res));
             }(), ...);
         }(std::make_index_sequence<std::variant_size_v<Variant>>{});
@@ -356,17 +342,17 @@ result<Variant> read_variant(const njson& j, std::string_view path) {
 }
 
 template <class T>
-result<T> read_dispatch(const njson& j, std::string_view path) {
+result<T> read_dispatch(const YAML::Node& node, std::string_view path) {
     using U = std::remove_cvref_t<T>;
 
-    if constexpr (requires { json_codec<U>::read(j, path); }) {
-        return json_codec<U>::read(j, path);
+    if constexpr (requires { yaml_codec<U>::read(node); }) {
+        return yaml_codec<U>::read(node);
     }
     else if constexpr (requires { typename U::value_type;
                                   requires std::same_as<U,
                                       validated<typename U::value_type>>; }) {
         using V = typename U::value_type;
-        auto inner = read_dispatch<V>(j, path);
+        auto inner = read_dispatch<V>(node, path);
         if (!inner) return fail(inner.error());
         return U::make(std::move(*inner)).map_error([&](auto e) {
             return error{error_kind::validation_failed, e, std::string{path}};
@@ -374,67 +360,55 @@ result<T> read_dispatch(const njson& j, std::string_view path) {
     }
     else if constexpr (is_wrapped_v<U>) {
         using V = typename U::value_type;
-        auto inner = read_dispatch<V>(j, path);
+        auto inner = read_dispatch<V>(node, path);
         if (!inner) return fail(inner.error());
         return U{std::move(*inner)};
     }
     else if constexpr (optional_like<U>) {
-        if (j.is_null()) return U{std::nullopt};
+        if (node.IsNull() || !node.IsDefined()) return U{std::nullopt};
         using V = typename U::value_type;
-        auto inner = read_dispatch<V>(j, path);
+        auto inner = read_dispatch<V>(node, path);
         if (!inner) return fail(inner.error());
         return U{std::move(*inner)};
     }
     else if constexpr (variant_like<U>) {
-        return read_variant<U>(j, path);
+        return read_variant<U>(node, path);
     }
     else if constexpr (boolean_like<U>) {
-        if (j.is_boolean()) return j.get<bool>();
-        return fail({error_kind::type_mismatch, "expected boolean", std::string{path}});
+        try { return node.as<bool>(); }
+        catch (...) { return fail({error_kind::type_mismatch, "expected boolean", std::string{path}}); }
     }
     else if constexpr (numeric_like<U>) {
-        if (j.is_number()) return j.get<U>();
-        return fail({error_kind::type_mismatch, "expected number", std::string{path}});
+        try { return node.as<U>(); }
+        catch (...) { return fail({error_kind::type_mismatch, "expected number", std::string{path}}); }
     }
     else if constexpr (string_like<U>) {
-        if (j.is_string()) return j.get<std::string>();
-        return fail({error_kind::type_mismatch, "expected string", std::string{path}});
+        try { return node.as<std::string>(); }
+        catch (...) { return fail({error_kind::type_mismatch, "expected string", std::string{path}}); }
     }
     else if constexpr (enum_like<U>) {
-        if (j.is_string()) {
-            std::string s = j.get<std::string>();
+        try {
+            std::string s = node.as<std::string>();
             auto val = rflcpp::enum_value<U>(s);
             if (val) return *val;
-            return fail({error_kind::type_mismatch, "invalid enum name: " + s, std::string{path}});
-        } else if (j.is_number_integer()) {
-            return static_cast<U>(j.get<long long>());
-        } else if (j.is_array() && rflcpp::enum_flags_policy<U>::is_flags) {
-            U out{};
-            for (auto const& item : j) {
-                if (item.is_string()) {
-                    auto val = rflcpp::enum_value<U>(item.get<std::string>());
-                    if (val) out = static_cast<U>(static_cast<std::underlying_type_t<U>>(out) | static_cast<std::underlying_type_t<U>>(*val));
-                }
-            }
-            return out;
-        }
-        return fail({error_kind::type_mismatch, "expected string or integer for enum", std::string{path}});
+        } catch (...) {}
+        return fail({error_kind::type_mismatch, "invalid enum", std::string{path}});
     }
     else if constexpr (map_like<U>) {
-        if (!j.is_object()) return fail({error_kind::type_mismatch, "expected object", std::string{path}});
+        if (!node.IsMap()) return fail({error_kind::type_mismatch, "expected map", std::string{path}});
         U out;
-        for (auto it = j.begin(); it != j.end(); ++it) {
-            auto val = read_dispatch<typename U::mapped_type>(it.value(), std::string{path} + "." + it.key());
+        for (auto const& item : node) {
+            auto val = read_dispatch<typename U::mapped_type>(item.second, std::string{path} + "." + item.first.as<std::string>());
             if (!val) return fail(val.error());
-            out[it.key()] = std::move(*val);
+            out[item.first.as<std::string>()] = std::move(*val);
         }
         return out;
     }
     else if constexpr (sequence_like<U>) {
-        if (!j.is_array()) return fail({error_kind::type_mismatch, "expected array", std::string{path}});
+        if (!node.IsSequence()) return fail({error_kind::type_mismatch, "expected sequence", std::string{path}});
         U out;
         int i = 0;
-        for (auto const& item : j) {
+        for (auto const& item : node) {
             auto val = read_dispatch<typename U::value_type>(item, std::string{path} + "[" + std::to_string(i++) + "]");
             if (!val) return fail(val.error());
             if constexpr (requires { out.push_back(std::move(*val)); })
@@ -445,36 +419,36 @@ result<T> read_dispatch(const njson& j, std::string_view path) {
         return out;
     }
     else if constexpr (reflectable_class<U>) {
-        if (j.is_object()) {
-            U val;
-            std::optional<error> failure;
-            read_members(j, val, path, failure);
-            if (failure) return fail(*failure);
-            return val;
-        }
-        return fail({error_kind::type_mismatch, "expected object", std::string{path}});
+        if (!node.IsMap()) return fail({error_kind::type_mismatch, "expected map", std::string{path}});
+        U val;
+        std::optional<error> failure;
+        read_members(node, val, path, failure);
+        if (failure) return fail(*failure);
+        return val;
     }
     return fail({error_kind::type_mismatch, "unsupported type", std::string{path}});
 }
 
-} // namespace detail::json
+} // namespace detail::yaml
 
 template <class T>
-[[nodiscard]] std::string to_json(const T& value, json_options opts = {}) {
-    njson j = detail::json::write_dispatch(value);
-    return j.dump(opts.indent);
+[[nodiscard]] std::string to_yaml(const T& value, yaml_options opts = {}) {
+    YAML::Node node = detail::yaml::write_dispatch(value);
+    YAML::Emitter out;
+    out << node;
+    return out.c_str();
 }
 
 template <class T>
-[[nodiscard]] result<T> from_json(std::string_view json_str) {
+[[nodiscard]] result<T> from_yaml(std::string_view yaml_str) {
     try {
-        njson j = njson::parse(json_str);
-        return detail::json::read_dispatch<T>(j, "$");
-    } catch (const njson::parse_error& e) {
-        return fail(error{error_kind::parse_error, e.what(), "$"});
+        YAML::Node node = YAML::Load(std::string{yaml_str});
+        return detail::yaml::read_dispatch<T>(node, "$");
+    } catch (const YAML::Exception& e) {
+        return fail({error_kind::parse_error, e.what(), "$"});
     }
 }
 
 } // namespace rflcpp
 
-#endif // RFLCPP_ENABLE_JSON
+#endif // RFLCPP_ENABLE_YAML

@@ -1,45 +1,44 @@
-// rflcpp/json.hpp - JSON serialization using nlohmann/json.
+// rflcpp/xml.hpp - XML serialization using pugixml.
 // SPDX-License-Identifier: MIT
 
 #pragma once
 
-#ifdef RFLCPP_ENABLE_JSON
+#ifdef RFLCPP_ENABLE_XML
 
-#include <nlohmann/json.hpp>
+#include <pugixml.hpp>
 #include <rflcpp/detail/serialization_common.hpp>
 #include <rflcpp/error.hpp>
 #include <rflcpp/result.hpp>
 #include <rflcpp/validation.hpp>
 
-#include <algorithm>
-#include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <variant>
-#include <vector>
 
 namespace rflcpp {
 
-using njson = nlohmann::json;
-
-struct json_options {
-    int indent = -1;
+struct xml_options {
+    /// Root element name.
+    std::string root = "root";
+    /// XML indentation.
+    std::string indent = "  ";
 };
 
-/// Specialize this to add custom-type support for `to_json` / `from_json`.
+/// Specialize this to add custom-type support for `to_xml` / `from_xml`.
 template <class T, class = void>
-struct json_codec;
+struct xml_codec;
 
-namespace detail::json {
+namespace detail::xml {
 
 using namespace rflcpp::detail::serialization;
 
 template <class T>
-njson write_dispatch(const T& v);
+void write_dispatch(pugi::xml_node& node, const T& v, std::string_view name);
 
 template <class T>
-void write_members(njson& j, const T& obj) {
+void write_members(pugi::xml_node& node, const T& obj) {
     using U = std::remove_cvref_t<T>;
 
     if constexpr (base_count_of<U>() > 0 &&
@@ -51,11 +50,10 @@ void write_members(njson& j, const T& obj) {
                 using B = typename [: std::meta::type_of(base) :];
                 const B& base_ref = static_cast<const B&>(obj);
                 if constexpr (base_policy<U>::mode == base_mode::flatten) {
-                    write_members(j, base_ref);
+                    write_members(node, base_ref);
                 } else if constexpr (base_policy<U>::mode == base_mode::nested) {
-                    njson inner_j = njson::object();
-                    write_members(inner_j, base_ref);
-                    j[std::string{type_name_of<B>()}] = std::move(inner_j);
+                    pugi::xml_node child = node.append_child(std::string{type_name_of<B>()}.c_str());
+                    write_members(child, base_ref);
                 }
             }(), ...);
         }(std::make_index_sequence<B_COUNT>{});
@@ -69,7 +67,7 @@ void write_members(njson& j, const T& obj) {
         if constexpr (flatten_v<FT>()) {
             auto const& inner = unwrap_ref<FT>(field_ref);
             if constexpr (reflectable_class<std::remove_cvref_t<decltype(inner)>>)
-                write_members(j, inner);
+                write_members(node, inner);
             return;
         }
 
@@ -88,103 +86,113 @@ void write_members(njson& j, const T& obj) {
         std::string key = effective_key<U, FT>(member_name);
 
         if constexpr (sensitive_v<FT>()) {
-            j[key] = "***";
+            node.append_child(key.c_str()).text().set("***");
         } else {
-            j[key] = detail::json::write_dispatch(inner);
+            detail::xml::write_dispatch(node, inner, key);
         }
     });
 }
 
 template <class Variant>
-njson write_variant(const Variant& v) {
+void write_variant(pugi::xml_node& node, const Variant& v, std::string_view name) {
     constexpr auto tagging = variant_policy<Variant>::tagging;
-    return std::visit([&](auto const& alt) -> njson {
+    std::visit([&](auto const& alt) {
         using A = std::remove_cvref_t<decltype(alt)>;
         if constexpr (tagging == variant_tagging::external) {
-            njson j = njson::object();
-            j[std::string{type_name_of<A>()}] = write_dispatch(alt);
-            return j;
+            pugi::xml_node child = node.append_child(std::string{name}.c_str());
+            pugi::xml_node val_node = child.append_child(std::string{type_name_of<A>()}.c_str());
+            if constexpr (reflectable_class<A>) write_members(val_node, alt);
+            else {
+                // For primitives in external variant, we just set the text of the tag node
+                if constexpr (boolean_like<A>) val_node.text().set(alt ? "true" : "false");
+                else if constexpr (numeric_like<A>) val_node.text().set(alt);
+                else if constexpr (string_like<A>) val_node.text().set(std::string{alt}.c_str());
+                else if constexpr (enum_like<A>) val_node.text().set(std::string{rflcpp::enum_name(alt)}.c_str());
+                else write_dispatch(val_node, alt, "value"); 
+            }
         } else if constexpr (tagging == variant_tagging::internal) {
-            njson j = njson::object();
-            j[std::string{variant_policy<Variant>::tag_field}] = std::string{type_name_of<A>()};
-            if constexpr (reflectable_class<A>) write_members(j, alt);
-            else j["value"] = write_dispatch(alt);
-            return j;
+            pugi::xml_node child = node.append_child(std::string{name}.c_str());
+            child.append_attribute(std::string{variant_policy<Variant>::tag_field}.c_str()).set_value(std::string{type_name_of<A>()}.c_str());
+            if constexpr (reflectable_class<A>) write_members(child, alt);
+            else write_dispatch(child, alt, "value");
         } else if constexpr (tagging == variant_tagging::adjacent) {
-            njson j = njson::object();
-            j[std::string{variant_policy<Variant>::tag_field}] = std::string{type_name_of<A>()};
-            j[std::string{variant_policy<Variant>::content_field}] = write_dispatch(alt);
-            return j;
+            pugi::xml_node child = node.append_child(std::string{name}.c_str());
+            child.append_child(std::string{variant_policy<Variant>::tag_field}.c_str()).text().set(std::string{type_name_of<A>()}.c_str());
+            pugi::xml_node content = child.append_child(std::string{variant_policy<Variant>::content_field}.c_str());
+            if constexpr (reflectable_class<A>) write_members(content, alt);
+            else write_dispatch(content, alt, "value");
         } else { // untagged
-            return write_dispatch(alt);
+            if constexpr (reflectable_class<A>) {
+                pugi::xml_node child = node.append_child(std::string{name}.c_str());
+                write_members(child, alt);
+            } else {
+                write_dispatch(node, alt, name);
+            }
         }
     }, v);
 }
 
 template <class T>
-njson write_dispatch(const T& v) {
+void write_dispatch(pugi::xml_node& node, const T& v, std::string_view name) {
     using U = std::remove_cvref_t<T>;
 
-    if constexpr (requires { json_codec<U>::write(v); }) {
-        return json_codec<U>::write(v);
+    if constexpr (requires { xml_codec<U>::write(node, v, name); }) {
+        xml_codec<U>::write(node, v, name);
     }
     else if constexpr (requires { v.get(); typename U::value_type;
                                   requires std::same_as<U,
                                       validated<typename U::value_type>>; }) {
-        return write_dispatch(v.get());
+        write_dispatch(node, v.get(), name);
     }
     else if constexpr (is_wrapped_v<U>) {
-        return write_dispatch(v.value);
+        write_dispatch(node, v.value, name);
     }
     else if constexpr (optional_like<U>) {
-        if (v.has_value()) return write_dispatch(*v);
-        return nullptr;
+        if (v.has_value()) write_dispatch(node, *v, name);
     }
     else if constexpr (variant_like<U>) {
-        return write_variant(v);
+        write_variant(node, v, name);
     }
     else if constexpr (enum_like<U>) {
         if constexpr (rflcpp::enum_flags_policy<U>::is_flags) {
+            pugi::xml_node child = node.append_child(std::string{name}.c_str());
             auto names = rflcpp::enum_flag_names(v);
-            njson j = njson::array();
-            for (auto const& n : names) j.push_back(n);
-            return j;
+            for (auto const& n : names) child.append_child("flag").text().set(std::string{n}.c_str());
         } else {
-            return std::string{rflcpp::enum_name(v)};
+            node.append_child(std::string{name}.c_str()).text().set(std::string{rflcpp::enum_name(v)}.c_str());
         }
     }
     else if constexpr (boolean_like<U>) {
-        return bool(v);
+        node.append_child(std::string{name}.c_str()).text().set(bool(v) ? "true" : "false");
     }
     else if constexpr (numeric_like<U>) {
-        return v;
+        if constexpr (std::is_integral_v<U>)
+            node.append_child(std::string{name}.c_str()).text().set((long long)v);
+        else
+            node.append_child(std::string{name}.c_str()).text().set((double)v);
     }
     else if constexpr (string_like<U>) {
-        return std::string{v};
+        node.append_child(std::string{name}.c_str()).text().set(std::string{v}.c_str());
     }
     else if constexpr (map_like<U>) {
-        njson j = njson::object();
-        for (auto const& [k, val] : v) j[std::string{k}] = write_dispatch(val);
-        return j;
+        pugi::xml_node child = node.append_child(std::string{name}.c_str());
+        for (auto const& [k, val] : v) write_dispatch(child, val, k);
     }
     else if constexpr (sequence_like<U>) {
-        njson j = njson::array();
-        for (auto const& e : v) j.push_back(write_dispatch(e));
-        return j;
+        pugi::xml_node child = node.append_child(std::string{name}.c_str());
+        for (auto const& e : v) write_dispatch(child, e, "item");
     }
     else if constexpr (reflectable_class<U>) {
-        njson j = njson::object();
-        write_members(j, v);
-        return j;
+        pugi::xml_node child = node.append_child(std::string{name}.c_str());
+        write_members(child, v);
     }
-    return nullptr;
 }
 
 template <class T>
-result<T> read_dispatch(const njson& j, std::string_view path);
+result<T> read_dispatch(const pugi::xml_node& node, std::string_view path);
 
 template <class Owner, class FieldType, class Out>
-void read_member(const njson& parent, std::string_view member_name,
+void read_member(const pugi::xml_node& parent, std::string_view member_name,
                  Out& out_field, std::string_view path,
                  std::optional<error>& failure)
 {
@@ -192,19 +200,20 @@ void read_member(const njson& parent, std::string_view member_name,
     if (failure || skip_on_read_v<F>()) return;
 
     std::string canonical = effective_key<Owner, F>(member_name);
-    auto it = parent.find(canonical);
-    if (it == parent.end()) {
+    pugi::xml_node found = parent.child(canonical.c_str());
+    if (found.empty()) {
         constexpr auto ap = aliases_pair<F>();
         for (std::size_t i = 0; i < ap.second; ++i) {
-            it = parent.find(std::string{ap.first[i]});
-            if (it != parent.end()) break;
+            std::string alias{ap.first[i]};
+            found = parent.child(alias.c_str());
+            if (!found.empty()) break;
         }
     }
 
     auto& inner = unwrap_ref<F>(out_field);
     using InnerT = std::remove_cvref_t<decltype(inner)>;
 
-    if (it == parent.end()) {
+    if (found.empty()) {
         if constexpr (has_default_v<F>()) {
             inner = default_v<F>();
             return;
@@ -216,13 +225,13 @@ void read_member(const njson& parent, std::string_view member_name,
         return;
     }
 
-    auto res = read_dispatch<InnerT>(*it, path);
+    auto res = read_dispatch<InnerT>(found, path);
     if (!res) failure = res.error();
     else      inner = std::move(*res);
 }
 
 template <class T>
-void read_members(const njson& j, T& obj, std::string_view path, std::optional<error>& failure) {
+void read_members(const pugi::xml_node& node, T& obj, std::string_view path, std::optional<error>& failure) {
     using U = std::remove_cvref_t<T>;
 
     if constexpr (base_count_of<U>() > 0 &&
@@ -235,12 +244,12 @@ void read_members(const njson& j, T& obj, std::string_view path, std::optional<e
                 using B = typename [: std::meta::type_of(base) :];
                 B& base_ref = static_cast<B&>(obj);
                 if constexpr (base_policy<U>::mode == base_mode::flatten) {
-                    read_members(j, base_ref, path, failure);
+                    read_members(node, base_ref, path, failure);
                 } else if constexpr (base_policy<U>::mode == base_mode::nested) {
-                    std::string key{type_name_of<B>()};
-                    auto it = j.find(key);
-                    if (it != j.end()) {
-                        auto res = read_dispatch<B>(*it, path);
+                    std::string key{rflcpp::type_name_of<B>()};
+                    pugi::xml_node child = node.child(key.c_str());
+                    if (!child.empty()) {
+                        auto res = read_dispatch<B>(child, path);
                         if (!res) failure = res.error();
                         else      base_ref = std::move(*res);
                     }
@@ -255,35 +264,28 @@ void read_members(const njson& j, T& obj, std::string_view path, std::optional<e
         if constexpr (flatten_v<FT>()) {
             auto& inner = unwrap_ref<FT>(field_ref);
             if constexpr (reflectable_class<std::remove_cvref_t<decltype(inner)>>)
-                read_members(j, inner, path, failure);
+                read_members(node, inner, path, failure);
         } else {
-            read_member<U, FT>(j, member_name, field_ref, path, failure);
+            read_member<U, FT>(node, member_name, field_ref, path, failure);
         }
     });
 }
 
 template <class Variant>
-result<Variant> read_variant(const njson& j, std::string_view path) {
+result<Variant> read_variant(const pugi::xml_node& node, std::string_view path) {
     constexpr auto tagging = variant_policy<Variant>::tagging;
 
-    auto try_read_alt = [&]<class Alt>() -> std::optional<result<Variant>> {
-        auto res = read_dispatch<Alt>(j, path);
-        if (res) return Variant(std::move(*res));
-        return std::nullopt;
-    };
-
     if constexpr (tagging == variant_tagging::external) {
-        if (!j.is_object() || j.size() != 1)
-            return fail({error_kind::type_mismatch, "expected object with single key for external variant", std::string{path}});
-        std::string key = j.begin().key();
-        const auto& val = j.begin().value();
+        pugi::xml_node val_node = node.first_child();
+        if (val_node.empty()) return fail({error_kind::missing_field, "missing variant tag", std::string{path}});
+        std::string key = val_node.name();
         std::optional<result<Variant>> found;
         [&]<std::size_t... Is>(std::index_sequence<Is...>) {
             ([&] {
                 if (found) return;
                 using Alt = std::variant_alternative_t<Is, Variant>;
                 if (key == type_name_of<Alt>()) {
-                    auto res = read_dispatch<Alt>(val, path);
+                    auto res = read_dispatch<Alt>(val_node, path);
                     if (res) found = Variant(std::move(*res));
                     else     found = fail(res.error());
                 }
@@ -293,19 +295,17 @@ result<Variant> read_variant(const njson& j, std::string_view path) {
         return fail({error_kind::type_mismatch, "unknown variant tag: " + key, std::string{path}});
     }
     else if constexpr (tagging == variant_tagging::internal) {
-        if (!j.is_object()) return fail({error_kind::type_mismatch, "expected object for internal variant", std::string{path}});
         std::string tag_field{variant_policy<Variant>::tag_field};
-        auto it = j.find(tag_field);
-        if (it == j.end() || !it->is_string())
-            return fail({error_kind::missing_field, "missing tag field '" + tag_field + "'", std::string{path}});
-        std::string tag = it->get<std::string>();
+        pugi::xml_attribute attr = node.attribute(tag_field.c_str());
+        if (attr.empty()) return fail({error_kind::missing_field, "missing tag attribute '" + tag_field + "'", std::string{path}});
+        std::string tag = attr.value();
         std::optional<result<Variant>> found;
         [&]<std::size_t... Is>(std::index_sequence<Is...>) {
             ([&] {
                 if (found) return;
                 using Alt = std::variant_alternative_t<Is, Variant>;
                 if (tag == type_name_of<Alt>()) {
-                    auto res = read_dispatch<Alt>(j, path);
+                    auto res = read_dispatch<Alt>(node, path);
                     if (res) found = Variant(std::move(*res));
                     else     found = fail(res.error());
                 }
@@ -315,23 +315,20 @@ result<Variant> read_variant(const njson& j, std::string_view path) {
         return fail({error_kind::type_mismatch, "unknown variant tag: " + tag, std::string{path}});
     }
     else if constexpr (tagging == variant_tagging::adjacent) {
-        if (!j.is_object()) return fail({error_kind::type_mismatch, "expected object for adjacent variant", std::string{path}});
         std::string tag_field{variant_policy<Variant>::tag_field};
         std::string content_field{variant_policy<Variant>::content_field};
-        auto it_tag = j.find(tag_field);
-        auto it_val = j.find(content_field);
-        if (it_tag == j.end() || !it_tag->is_string())
-            return fail({error_kind::missing_field, "missing tag field '" + tag_field + "'", std::string{path}});
-        if (it_val == j.end())
-            return fail({error_kind::missing_field, "missing content field '" + content_field + "'", std::string{path}});
-        std::string tag = it_tag->get<std::string>();
+        pugi::xml_node tag_node = node.child(tag_field.c_str());
+        pugi::xml_node val_node = node.child(content_field.c_str());
+        if (tag_node.empty()) return fail({error_kind::missing_field, "missing tag node '" + tag_field + "'", std::string{path}});
+        if (val_node.empty()) return fail({error_kind::missing_field, "missing content node '" + content_field + "'", std::string{path}});
+        std::string tag = tag_node.text().as_string();
         std::optional<result<Variant>> found;
         [&]<std::size_t... Is>(std::index_sequence<Is...>) {
             ([&] {
                 if (found) return;
                 using Alt = std::variant_alternative_t<Is, Variant>;
                 if (tag == type_name_of<Alt>()) {
-                    auto res = read_dispatch<Alt>(*it_val, path);
+                    auto res = read_dispatch<Alt>(val_node, path);
                     if (res) found = Variant(std::move(*res));
                     else     found = fail(res.error());
                 }
@@ -346,7 +343,7 @@ result<Variant> read_variant(const njson& j, std::string_view path) {
             ([&] {
                 if (found) return;
                 using Alt = std::variant_alternative_t<Is, Variant>;
-                auto res = read_dispatch<Alt>(j, path);
+                auto res = read_dispatch<Alt>(node, path);
                 if (res) found = Variant(std::move(*res));
             }(), ...);
         }(std::make_index_sequence<std::variant_size_v<Variant>>{});
@@ -356,17 +353,17 @@ result<Variant> read_variant(const njson& j, std::string_view path) {
 }
 
 template <class T>
-result<T> read_dispatch(const njson& j, std::string_view path) {
+result<T> read_dispatch(const pugi::xml_node& node, std::string_view path) {
     using U = std::remove_cvref_t<T>;
 
-    if constexpr (requires { json_codec<U>::read(j, path); }) {
-        return json_codec<U>::read(j, path);
+    if constexpr (requires { xml_codec<U>::read(node); }) {
+        return xml_codec<U>::read(node);
     }
     else if constexpr (requires { typename U::value_type;
                                   requires std::same_as<U,
                                       validated<typename U::value_type>>; }) {
         using V = typename U::value_type;
-        auto inner = read_dispatch<V>(j, path);
+        auto inner = read_dispatch<V>(node, path);
         if (!inner) return fail(inner.error());
         return U::make(std::move(*inner)).map_error([&](auto e) {
             return error{error_kind::validation_failed, e, std::string{path}};
@@ -374,68 +371,53 @@ result<T> read_dispatch(const njson& j, std::string_view path) {
     }
     else if constexpr (is_wrapped_v<U>) {
         using V = typename U::value_type;
-        auto inner = read_dispatch<V>(j, path);
+        auto inner = read_dispatch<V>(node, path);
         if (!inner) return fail(inner.error());
         return U{std::move(*inner)};
     }
     else if constexpr (optional_like<U>) {
-        if (j.is_null()) return U{std::nullopt};
+        if (node.empty()) return U{std::nullopt};
         using V = typename U::value_type;
-        auto inner = read_dispatch<V>(j, path);
+        auto inner = read_dispatch<V>(node, path);
         if (!inner) return fail(inner.error());
         return U{std::move(*inner)};
     }
     else if constexpr (variant_like<U>) {
-        return read_variant<U>(j, path);
+        return read_variant<U>(node, path);
     }
     else if constexpr (boolean_like<U>) {
-        if (j.is_boolean()) return j.get<bool>();
+        std::string s = node.text().as_string();
+        if (s == "true" || s == "1") return true;
+        if (s == "false" || s == "0") return false;
         return fail({error_kind::type_mismatch, "expected boolean", std::string{path}});
     }
     else if constexpr (numeric_like<U>) {
-        if (j.is_number()) return j.get<U>();
-        return fail({error_kind::type_mismatch, "expected number", std::string{path}});
+        if constexpr (std::is_integral_v<U>) return static_cast<U>(node.text().as_llong());
+        else return static_cast<U>(node.text().as_double());
     }
     else if constexpr (string_like<U>) {
-        if (j.is_string()) return j.get<std::string>();
-        return fail({error_kind::type_mismatch, "expected string", std::string{path}});
+        return std::string{node.text().as_string()};
     }
     else if constexpr (enum_like<U>) {
-        if (j.is_string()) {
-            std::string s = j.get<std::string>();
-            auto val = rflcpp::enum_value<U>(s);
-            if (val) return *val;
-            return fail({error_kind::type_mismatch, "invalid enum name: " + s, std::string{path}});
-        } else if (j.is_number_integer()) {
-            return static_cast<U>(j.get<long long>());
-        } else if (j.is_array() && rflcpp::enum_flags_policy<U>::is_flags) {
-            U out{};
-            for (auto const& item : j) {
-                if (item.is_string()) {
-                    auto val = rflcpp::enum_value<U>(item.get<std::string>());
-                    if (val) out = static_cast<U>(static_cast<std::underlying_type_t<U>>(out) | static_cast<std::underlying_type_t<U>>(*val));
-                }
-            }
-            return out;
-        }
-        return fail({error_kind::type_mismatch, "expected string or integer for enum", std::string{path}});
+        std::string s = node.text().as_string();
+        auto val = rflcpp::enum_value<U>(s);
+        if (val) return *val;
+        return fail({error_kind::type_mismatch, "invalid enum", std::string{path}});
     }
     else if constexpr (map_like<U>) {
-        if (!j.is_object()) return fail({error_kind::type_mismatch, "expected object", std::string{path}});
         U out;
-        for (auto it = j.begin(); it != j.end(); ++it) {
-            auto val = read_dispatch<typename U::mapped_type>(it.value(), std::string{path} + "." + it.key());
+        for (pugi::xml_node child : node.children()) {
+            auto val = read_dispatch<typename U::mapped_type>(child, std::string{path} + "." + child.name());
             if (!val) return fail(val.error());
-            out[it.key()] = std::move(*val);
+            out[child.name()] = std::move(*val);
         }
         return out;
     }
     else if constexpr (sequence_like<U>) {
-        if (!j.is_array()) return fail({error_kind::type_mismatch, "expected array", std::string{path}});
         U out;
         int i = 0;
-        for (auto const& item : j) {
-            auto val = read_dispatch<typename U::value_type>(item, std::string{path} + "[" + std::to_string(i++) + "]");
+        for (pugi::xml_node child : node.children()) {
+            auto val = read_dispatch<typename U::value_type>(child, std::string{path} + "[" + std::to_string(i++) + "]");
             if (!val) return fail(val.error());
             if constexpr (requires { out.push_back(std::move(*val)); })
                 out.push_back(std::move(*val));
@@ -445,36 +427,49 @@ result<T> read_dispatch(const njson& j, std::string_view path) {
         return out;
     }
     else if constexpr (reflectable_class<U>) {
-        if (j.is_object()) {
-            U val;
-            std::optional<error> failure;
-            read_members(j, val, path, failure);
-            if (failure) return fail(*failure);
-            return val;
-        }
-        return fail({error_kind::type_mismatch, "expected object", std::string{path}});
+        U val;
+        std::optional<error> failure;
+        read_members(node, val, path, failure);
+        if (failure) return fail(*failure);
+        return val;
     }
     return fail({error_kind::type_mismatch, "unsupported type", std::string{path}});
 }
 
-} // namespace detail::json
+} // namespace detail::xml
 
 template <class T>
-[[nodiscard]] std::string to_json(const T& value, json_options opts = {}) {
-    njson j = detail::json::write_dispatch(value);
-    return j.dump(opts.indent);
+[[nodiscard]] std::string to_xml(const T& value, xml_options opts = {}) {
+    pugi::xml_document doc;
+    pugi::xml_node root = doc.append_child(opts.root.c_str());
+    if constexpr (reflectable_class<T>) {
+        detail::xml::write_members(root, value);
+    } else if constexpr (map_like<T>) {
+        for (auto const& [k, val] : value) detail::xml::write_dispatch(root, val, k);
+    } else if constexpr (sequence_like<T>) {
+        for (auto const& e : value) detail::xml::write_dispatch(root, e, "item");
+    } else {
+        // For primitives, write directly into the root node's text
+        using U = std::remove_cvref_t<T>;
+        if constexpr (boolean_like<U>) root.text().set(value ? "true" : "false");
+        else if constexpr (numeric_like<U>) root.text().set(value);
+        else if constexpr (string_like<U>) root.text().set(std::string{value}.c_str());
+        else if constexpr (enum_like<U>) root.text().set(std::string{rflcpp::enum_name(value)}.c_str());
+        else detail::xml::write_dispatch(root, value, "value");
+    }
+    std::stringstream ss;
+    doc.save(ss, opts.indent.c_str());
+    return ss.str();
 }
 
 template <class T>
-[[nodiscard]] result<T> from_json(std::string_view json_str) {
-    try {
-        njson j = njson::parse(json_str);
-        return detail::json::read_dispatch<T>(j, "$");
-    } catch (const njson::parse_error& e) {
-        return fail(error{error_kind::parse_error, e.what(), "$"});
-    }
+[[nodiscard]] result<T> from_xml(std::string_view xml_str) {
+    pugi::xml_document doc;
+    pugi::xml_parse_result res = doc.load_string(std::string{xml_str}.c_str());
+    if (!res) return fail(error{error_kind::parse_error, res.description(), "$"});
+    return detail::xml::read_dispatch<T>(doc.first_child(), "$");
 }
 
 } // namespace rflcpp
 
-#endif // RFLCPP_ENABLE_JSON
+#endif // RFLCPP_ENABLE_XML

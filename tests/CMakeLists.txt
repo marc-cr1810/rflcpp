@@ -13,6 +13,16 @@ set(RFLCPP_TEST_SOURCES
     test_schema.cpp
 )
 
+if(RFLCPP_ENABLE_XML)
+    list(APPEND RFLCPP_TEST_SOURCES test_xml.cpp)
+endif()
+if(RFLCPP_ENABLE_YAML)
+    list(APPEND RFLCPP_TEST_SOURCES test_yaml.cpp)
+endif()
+if(RFLCPP_ENABLE_TOML)
+    list(APPEND RFLCPP_TEST_SOURCES test_toml.cpp)
+endif()
+
 add_executable(rflcpp_tests ${RFLCPP_TEST_SOURCES})
 
 target_link_libraries(rflcpp_tests

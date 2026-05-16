@@ -1,0 +1,11 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# rflcpp has no required external dependencies. If that changes in the future,
+# this is the place to find_dependency(...) them so downstream find_package
+# users transparently pick them up.
+
+include("${CMAKE_CURRENT_LIST_DIR}/rflcppTargets.cmake")
+
+check_required_components(rflcpp)

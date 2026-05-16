@@ -1,0 +1,155 @@
+// rflcpp/schema.hpp - JSON Schema generation from reflectable types.
+// SPDX-License-Identifier: MIT
+#pragma once
+
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <variant>
+
+#include <rflcpp/attributes.hpp>
+#include <rflcpp/concepts.hpp>
+#include <rflcpp/enum_meta.hpp>
+#include <rflcpp/policy.hpp>
+#include <rflcpp/reflect.hpp>
+
+namespace rflcpp {
+
+namespace detail::schema {
+
+inline void emit_string(std::ostringstream& os, std::string_view s) {
+    os << '"';
+    for (char c : s) {
+        switch (c) {
+            case '"':  os << "\\\""; break;
+            case '\\': os << "\\\\"; break;
+            case '\n': os << "\\n";  break;
+            case '\t': os << "\\t";  break;
+            default:   os << c;
+        }
+    }
+    os << '"';
+}
+
+template <class T> void emit_schema(std::ostringstream& os);
+
+template <class T>
+void emit_schema_for_type(std::ostringstream& os) {
+    using U = std::remove_cvref_t<T>;
+
+    if constexpr (is_wrapped_v<U>) {
+        emit_schema_for_type<unwrap_t<U>>(os);
+    }
+    else if constexpr (optional_like<U>) {
+        os << "{\"anyOf\":[";
+        emit_schema_for_type<typename U::value_type>(os);
+        os << ",{\"type\":\"null\"}]}";
+    }
+    else if constexpr (variant_like<U>) {
+        os << "{\"oneOf\":[";
+        bool first = true;
+        []<class... As>(std::ostringstream& os, bool& first, std::variant<As...>*) {
+            (void)((first ? (first = false, true) : (os << ',', true),
+                    emit_schema_for_type<As>(os), true), ...);
+        }(os, first, static_cast<U*>(nullptr));
+        os << "]}";
+    }
+    else if constexpr (enum_like<U>) {
+        static constexpr auto entries = enum_entries<U>();
+        os << "{\"type\":\"string\",\"enum\":[";
+        bool first = true;
+        for (auto const& [v, n] : entries) {
+            if (!first) os << ',';
+            first = false;
+            emit_string(os, n);
+        }
+        os << "]}";
+    }
+    else if constexpr (std::is_same_v<U, bool>)     os << "{\"type\":\"boolean\"}";
+    else if constexpr (std::is_integral_v<U>)       os << "{\"type\":\"integer\"}";
+    else if constexpr (std::is_floating_point_v<U>) os << "{\"type\":\"number\"}";
+    else if constexpr (string_like<U>)              os << "{\"type\":\"string\"}";
+    else if constexpr (sequence_like<U>) {
+        os << "{\"type\":\"array\",\"items\":";
+        emit_schema_for_type<typename U::value_type>(os);
+        os << "}";
+    }
+    else if constexpr (map_like<U>) {
+        os << "{\"type\":\"object\",\"additionalProperties\":";
+        emit_schema_for_type<typename U::mapped_type>(os);
+        os << "}";
+    }
+    else if constexpr (reflectable_class<U>) {
+        os << "{\"type\":\"object\",\"properties\":{";
+        bool first = true;
+        std::vector<std::string> required;
+        for_each_field(U{}, [&]<class Ref>(std::string_view name, Ref const&) {
+            using FT = std::remove_cvref_t<Ref>;
+            if (!first) os << ',';
+            first = false;
+
+            std::string key{name};
+            if constexpr (is_field_v<FT>) {
+                key = std::string{FT::name()};
+            } else if constexpr (is_attr_v<FT>) {
+                using attrs_tuple = typename FT::attributes;
+                constexpr auto rn = []<class... A>(std::tuple<A...>*) consteval {
+                    return rflcpp::detail::rename_of<A...>();
+                }(static_cast<attrs_tuple*>(nullptr));
+                key = !rn.empty() ? std::string{rn}
+                                  : naming_policy<U>::transform(name);
+            } else {
+                key = naming_policy<U>::transform(name);
+            }
+
+            emit_string(os, key);
+            os << ':';
+            emit_schema_for_type<unwrap_t<FT>>(os);
+
+            if constexpr (!optional_like<unwrap_t<FT>>) required.push_back(key);
+        });
+        os << "}";
+        if (!required.empty()) {
+            os << ",\"required\":[";
+            bool first2 = true;
+            for (auto const& r : required) {
+                if (!first2) os << ',';
+                first2 = false;
+                emit_string(os, r);
+            }
+            os << "]";
+        }
+        os << "}";
+    } else {
+        os << "{\"type\":\"object\",\"description\":\"unsupported\"}";
+    }
+}
+
+template <class T>
+void emit_schema(std::ostringstream& os) {
+    os << "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\","
+          "\"title\":";
+    emit_string(os, type_name_of<T>());
+    os << ",\"$id\":\"rflcpp://" << type_name_of<T>() << "\",";
+
+    // Splice the inner schema into this envelope by stripping its outer braces.
+    std::ostringstream inner;
+    emit_schema_for_type<T>(inner);
+    std::string body = inner.str();
+    if (!body.empty() && body.front() == '{' && body.back() == '}')
+        body = body.substr(1, body.size() - 2);
+    os << body << "}";
+}
+
+} // namespace detail::schema
+
+/// Returns a JSON Schema (Draft 2020-12) description of `T`.
+template <class T>
+[[nodiscard]] std::string to_json_schema() {
+    std::ostringstream os;
+    detail::schema::emit_schema<T>(os);
+    return os.str();
+}
+
+} // namespace rflcpp

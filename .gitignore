@@ -1,0 +1,41 @@
+# Build outputs
+build/
+build-*/
+out/
+cmake-build-*/
+
+# CMake stragglers (in case build/ is overridden into the tree)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+
+# Editor / IDE
+.vscode/
+.idea/
+.cache/
+*.swp
+*.swo
+.DS_Store
+
+# Object / debug files
+*.o
+*.obj
+*.gcno
+*.gcda
+*.a
+*.lo
+*.la
+*.dSYM/
+*.pdb
+
+# Doxygen output
+docs/html/
+docs/latex/
+docs/xml/
+
+# Coverage
+coverage/
+*.profraw
+*.profdata

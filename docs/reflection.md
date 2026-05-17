@@ -54,6 +54,42 @@ Point q   = rflcpp::from_tuple<Point>(std::tuple{4, 5, 6});
 `std::get<0>(rflcpp::to_tuple(p)) = 42;`, structured bindings over arbitrary
 aggregates, or generic algorithms that already speak tuples.
 
+## Helper queries and metadata
+
+`rflcpp` provides several advanced compile-time queries:
+
+### `base_count_of<T>()`
+
+Returns the compile-time count of direct base classes of `T`:
+
+```cpp
+struct Base { int a; };
+struct Derived : Base { int b; };
+
+static_assert(rflcpp::base_count_of<Derived>() == 1);
+```
+
+### `type_name_of<T>()`
+
+Returns a compile-time `std::string_view` of the spelled type name. It abstracts away compiler-specific decorations:
+
+```cpp
+static_assert(rflcpp::type_name_of<int>() == "int");
+static_assert(rflcpp::type_name_of<Point>() == "Point");
+```
+
+### `template_for_each_field<T>(fn)`
+
+Visits field metadata at compile time **without** needing an object instance. The functor/lambda is called as `fn.template operator()<FieldType>(field_name)`:
+
+```cpp
+rflcpp::template_for_each_field<Point>([]<class FT>(std::string_view name) {
+    std::cout << "Field: " << name << " Type: " << rflcpp::type_name_of<FT>() << "\n";
+});
+```
+
+This is heavily used internally by the library for schema generation and CLI parsers.
+
 ## What types are "reflectable"?
 
 The `rflcpp::reflectable_class` concept currently excludes:
@@ -65,5 +101,5 @@ The `rflcpp::reflectable_class` concept currently excludes:
 * `std::optional`,
 
 leaving every other class type as a candidate for reflective inspection.
-You can always specialize `rflcpp::json_codec<T>` to override how a
-particular type is serialized.
+You can always specialize format codecs (e.g. `rflcpp::json_codec<T>`) to override how a
+particular type is handled.

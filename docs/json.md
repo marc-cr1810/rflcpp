@@ -59,20 +59,29 @@ Possible `error_kind` values: `parse_error`, `type_mismatch`,
 
 ## Extending: custom codecs
 
-To teach `to_json` / `from_json` about a non-reflectable type, specialize
-`rflcpp::json_codec<T>`:
+To teach `to_json` / `from_json` about a custom or third-party non-reflectable type, specialize `rflcpp::json_codec<T>`.
+
+Your codec must define:
+* `static nlohmann::json write(const T& value)`
+* `static rflcpp::result<T> read(const nlohmann::json& j, std::string_view path)`
+
+Here is how you can write a codec to serialize a custom `Color` class as a hex string:
 
 ```cpp
+#include <rflcpp/json.hpp>
+
 namespace rflcpp {
 template <>
 struct json_codec<Color> {
-    static void write(detail::json::writer& w, const Color& c) {
-        w.write_string(c.as_hex());           // -> JSON string
+    static nlohmann::json write(const Color& c) {
+        return c.as_hex(); // e.g. "#ffffff"
     }
-    static result<Color> read(const detail::json::value& v, std::string_view path) {
-        if (v.k != detail::json::value::kind::string_)
+
+    static result<Color> read(const nlohmann::json& j, std::string_view path) {
+        if (!j.is_string()) {
             return fail({error_kind::type_mismatch, "expected hex string", std::string{path}});
-        return Color::from_hex(v.s);
+        }
+        return Color::from_hex(j.get<std::string>());
     }
 };
 } // namespace rflcpp

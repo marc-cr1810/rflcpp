@@ -32,18 +32,15 @@ No macros. No mixin base classes. No external code generation. Just C++26.
 ## Highlights
 
 * **Reflection-native.** Field names, types, and counts come straight from
-  `<experimental/meta>`. No `BOOST_FUSION_ADAPT_STRUCT`-style boilerplate.
-* **JSON** serialization and deserialization, with `std::expected`-based
-  error handling and `Doxygen`-friendly diagnostics.
-* **Validation.** Attach compile-time rules to a value with
-  `rflcpp::validated<T, Rules...>`.
-* **Named fields** for opting into a wire format that differs from your C++
-  identifiers, via `rflcpp::field<"json_name", T>`.
-* **Extensible.** Specialize `rflcpp::json_codec<T>` to teach the library
-  about your own types.
-* **Pay-for-what-you-use.** Every header is independently includable.
-* **Header-mostly.** Drops in via CMake `add_subdirectory` or
-  `find_package(rflcpp)`.
+  `<meta>` / `<experimental/meta>`. No `BOOST_FUSION_ADAPT_STRUCT`-style boilerplate.
+* **Format-rich.** Natively supports **JSON** (via `nlohmann/json`), **XML** (via `pugixml`), **YAML** (via `yaml-cpp`), **TOML** (via `toml++`), and binary formats like **CBOR** and **MessagePack** (via `mpack`).
+* **Attributes.** Transparently wrap fields using `rflcpp::attr<T, Attrs...>` and `rflcpp::field<"name", T>` to specify `skip`, `rename`, `aliases`, `sensitive` redaction, `flatten`, `default_to`, and more.
+* **Validation.** Enforce compile-time invariants with `rflcpp::validated<T, Rules...>` checking on construction and parse boundaries.
+* **JSON Schema.** Effortlessly generate Draft 2020-12 schemas from reflectable classes, fully reflecting custom field descriptions and validation constraints.
+* **Merge Patches.** Track partial updates with `rflcpp::patch_type<T>`, enabling standard RFC 7396 merge patches and structural diffing (`rflcpp::diff`).
+* **Type Registry.** Manage polymorphic serialization of dynamic types via compile-time registries and `rflcpp::registered_any<Registry, Tag>`.
+* **CLI parsing.** Instantly derive an elegant, typed command-line arguments parser from standard configuration structs.
+* **Header-mostly.** Simply drop in via CMake `add_subdirectory` or `find_package(rflcpp)`.
 
 ## Project layout
 
@@ -91,13 +88,20 @@ actionable message when reflection isn't available.
 
 ## Documentation
 
-See [`docs/`](docs/index.md):
+See the complete user guides in [`docs/`](docs/index.md):
 
-- [Getting started](docs/getting_started.md)
-- [Reflection façade](docs/reflection.md)
-- [JSON serialization](docs/json.md)
-- [Validation](docs/validation.md)
-- [Extending rflcpp](docs/extending.md)
+* [Getting started](docs/getting_started.md) — Requirements, building, CMake integration, and feature flags.
+* [Reflection façade](docs/reflection.md) — Dynamic traversal, type names, and tuple interop.
+* [JSON serialization](docs/json.md) — Basic JSON roundtrips, pretty printing, and errors.
+* [Validation](docs/validation.md) — Attaching constraints to numeric values and containers.
+* [Field attributes](docs/attributes.md) — Renaming, aliases, skip, redaction, flattening, and defaults.
+* [Serialization formats](docs/formats.md) — XML, YAML, TOML, CBOR, and MessagePack formats.
+* [JSON Schema generation](docs/schema.md) — Automatic JSON Schema generation with metadata.
+* [CLI argument parsing](docs/cli.md) — Deriving CLI parsers directly from reflectable structs.
+* [Reflected Any](docs/any.md) — Reflection-aware type erasure container.
+* [Merge Patches & Diffing](docs/patch.md) — RFC 7396 Merge Patches, object diffing, and merging.
+* [Polymorphic Type Registries](docs/registry.md) — Tags, registries, and dynamic deserialization.
+* [Extending rflcpp](docs/extending.md) — Custom codecs and adding formats.
 
 ## License
 

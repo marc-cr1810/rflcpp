@@ -10,11 +10,18 @@ reflection-native implementation.
 
 ## Documentation index
 
-- [Getting started](getting_started.md)
-- [Reflection façade](reflection.md)
-- [JSON serialization](json.md)
-- [Validation](validation.md)
-- [Extending rflcpp](extending.md)
+* **[Getting started](getting_started.md)** — Requirements, building, CMake integration, and feature flags.
+* **[Reflection façade](reflection.md)** — Dynamic traversal, type names, and tuple interop.
+* **[JSON serialization](json.md)** — Basic JSON roundtrips, pretty printing, and errors.
+* **[Validation](validation.md)** — Attaching invariants to numeric values and containers.
+* **[Field attributes](attributes.md)** — Renaming, aliases, skip, redaction, flattening, and defaults.
+* **[Serialization formats](formats.md)** — XML, YAML, TOML, CBOR, and MessagePack formats.
+* **[JSON Schema generation](schema.md)** — Automatic JSON Schema generation with metadata.
+* **[CLI argument parsing](cli.md)** — Deriving CLI parsers directly from reflectable structs.
+* **[Reflected Any](any.md)** — Reflection-aware type erasure container.
+* **[Merge Patches & Diffing](patch.md)** — RFC 7396 Merge Patches, object diffing, and merging.
+* **[Polymorphic Type Registries](registry.md)** — Tags, registries, and dynamic deserialization.
+* **[Extending rflcpp](extending.md)** — Custom codecs and adding formats.
 
 ## At a glance
 

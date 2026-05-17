@@ -19,6 +19,7 @@ reflection-native implementation.
 * **[JSON Schema generation](schema.md)** — Automatic JSON Schema generation with metadata.
 * **[CLI argument parsing](cli.md)** — Deriving CLI parsers directly from reflectable structs.
 * **[Reflected Any](any.md)** — Reflection-aware type erasure container.
+* **[Dynamic Method Invocation](invoke.md)** — Call member functions by name with dynamic argument coercion.
 * **[Merge Patches & Diffing](patch.md)** — RFC 7396 Merge Patches, object diffing, and merging.
 * **[Polymorphic Type Registries](registry.md)** — Tags, registries, and dynamic deserialization.
 * **[Extending rflcpp](extending.md)** — Custom codecs and adding formats.

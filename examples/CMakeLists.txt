@@ -20,6 +20,7 @@ set(RFLCPP_EXAMPLES
     14_reflected_any
     15_patch_and_diff
     16_type_registry
+    17_method_invocation
 )
 
 foreach(example IN LISTS RFLCPP_EXAMPLES)

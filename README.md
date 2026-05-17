@@ -40,6 +40,7 @@ No macros. No mixin base classes. No external code generation. Just C++26.
 * **Merge Patches.** Track partial updates with `rflcpp::patch_type<T>`, enabling standard RFC 7396 merge patches and structural diffing (`rflcpp::diff`).
 * **Type Registry.** Manage polymorphic serialization of dynamic types via compile-time registries and `rflcpp::registered_any<Registry, Tag>`.
 * **CLI parsing.** Instantly derive an elegant, typed command-line arguments parser from standard configuration structs.
+* **Dynamic Method Invocation.** Call class member functions dynamically by string name at runtime with automated, typesafe parameter coercion.
 * **Header-mostly.** Simply drop in via CMake `add_subdirectory` or `find_package(rflcpp)`.
 
 ## Project layout
@@ -99,6 +100,7 @@ See the complete user guides in [`docs/`](docs/index.md):
 * [JSON Schema generation](docs/schema.md) — Automatic JSON Schema generation with metadata.
 * [CLI argument parsing](docs/cli.md) — Deriving CLI parsers directly from reflectable structs.
 * [Reflected Any](docs/any.md) — Reflection-aware type erasure container.
+* [Dynamic Method Invocation](docs/invoke.md) — Call member functions by name with dynamic argument coercion.
 * [Merge Patches & Diffing](docs/patch.md) — RFC 7396 Merge Patches, object diffing, and merging.
 * [Polymorphic Type Registries](docs/registry.md) — Tags, registries, and dynamic deserialization.
 * [Extending rflcpp](docs/extending.md) — Custom codecs and adding formats.

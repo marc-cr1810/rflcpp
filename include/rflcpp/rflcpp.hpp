@@ -18,5 +18,6 @@
 #include <rflcpp/result.hpp>
 #include <rflcpp/schema.hpp>
 #include <rflcpp/validation.hpp>
+#include <rflcpp/invoke.hpp>
 
 namespace rflcpp {}

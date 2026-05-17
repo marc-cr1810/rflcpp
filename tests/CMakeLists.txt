@@ -15,6 +15,7 @@ set(RFLCPP_TEST_SOURCES
     test_cli.cpp
     test_patch.cpp
     test_registry.cpp
+    test_invoke.cpp
 )
 
 if(RFLCPP_ENABLE_XML)

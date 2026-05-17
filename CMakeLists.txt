@@ -207,6 +207,8 @@ set(RFLCPP_PUBLIC_HEADERS
     include/rflcpp/result.hpp
     include/rflcpp/schema.hpp
     include/rflcpp/validation.hpp
+    include/rflcpp/patch.hpp
+    include/rflcpp/registry.hpp
 )
 
 if(RFLCPP_ENABLE_JSON)

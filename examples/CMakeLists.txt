@@ -18,6 +18,8 @@ set(RFLCPP_EXAMPLES
     12_binary_formats
     13_cli_parser
     14_reflected_any
+    15_patch_and_diff
+    16_type_registry
 )
 
 foreach(example IN LISTS RFLCPP_EXAMPLES)

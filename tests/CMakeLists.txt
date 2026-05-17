@@ -13,6 +13,8 @@ set(RFLCPP_TEST_SOURCES
     test_schema.cpp
     test_any.cpp
     test_cli.cpp
+    test_patch.cpp
+    test_registry.cpp
 )
 
 if(RFLCPP_ENABLE_XML)

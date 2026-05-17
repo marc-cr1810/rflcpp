@@ -14,6 +14,10 @@ set(RFLCPP_EXAMPLES
     08_attributes
     09_variants
     10_derive_and_schema
+    11_schema_metadata
+    12_binary_formats
+    13_cli_parser
+    14_reflected_any
 )
 
 foreach(example IN LISTS RFLCPP_EXAMPLES)

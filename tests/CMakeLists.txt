@@ -11,6 +11,8 @@ set(RFLCPP_TEST_SOURCES
     test_variant.cpp
     test_derive.cpp
     test_schema.cpp
+    test_any.cpp
+    test_cli.cpp
 )
 
 if(RFLCPP_ENABLE_XML)
@@ -21,6 +23,9 @@ if(RFLCPP_ENABLE_YAML)
 endif()
 if(RFLCPP_ENABLE_TOML)
     list(APPEND RFLCPP_TEST_SOURCES test_toml.cpp)
+endif()
+if(RFLCPP_ENABLE_MSGPACK)
+    list(APPEND RFLCPP_TEST_SOURCES test_msgpack.cpp)
 endif()
 
 add_executable(rflcpp_tests ${RFLCPP_TEST_SOURCES})

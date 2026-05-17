@@ -368,9 +368,9 @@ result<T> read_dispatch(const njson& j, std::string_view path) {
         using V = typename U::value_type;
         auto inner = read_dispatch<V>(j, path);
         if (!inner) return fail(inner.error());
-        return U::make(std::move(*inner)).map_error([&](auto e) {
-            return error{error_kind::validation_failed, e, std::string{path}};
-        });
+        auto res = U::make(std::move(*inner));
+        if (!res) return fail(error{error_kind::validation_failed, std::string{res.error().message()}, std::string{path}});
+        return res;
     }
     else if constexpr (is_wrapped_v<U>) {
         using V = typename U::value_type;

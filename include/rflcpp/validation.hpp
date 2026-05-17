@@ -91,6 +91,7 @@ class validated {
     static_assert((validation_rule<Rules, T> && ...),
                   "All Rules must satisfy validation_rule<R, T>.");
 public:
+    validated() = default;
     using value_type = T;
 
     explicit validated(T v) : value_(std::move(v)) {
@@ -128,6 +129,73 @@ private:
     }
 
     T value_;
+};
+
+template <class> struct is_validated : std::false_type {};
+template <class T, class... R> struct is_validated<validated<T, R...>> : std::true_type {};
+template <class T> inline constexpr bool is_validated_v = is_validated<std::remove_cvref_t<T>>::value;
+
+namespace detail {
+
+template <class Rule> struct rule_traits {
+    static constexpr std::optional<double> min_v() { return std::nullopt; }
+    static constexpr std::optional<double> max_v() { return std::nullopt; }
+    static constexpr std::optional<std::size_t> min_l() { return std::nullopt; }
+    static constexpr std::optional<std::size_t> max_l() { return std::nullopt; }
+};
+
+template <auto V> struct rule_traits<rules::min_value<V>> {
+    static constexpr std::optional<double> min_v() { return static_cast<double>(V); }
+    static constexpr std::optional<double> max_v() { return std::nullopt; }
+    static constexpr std::optional<std::size_t> min_l() { return std::nullopt; }
+    static constexpr std::optional<std::size_t> max_l() { return std::nullopt; }
+};
+
+template <auto V> struct rule_traits<rules::max_value<V>> {
+    static constexpr std::optional<double> min_v() { return std::nullopt; }
+    static constexpr std::optional<double> max_v() { return static_cast<double>(V); }
+    static constexpr std::optional<std::size_t> min_l() { return std::nullopt; }
+    static constexpr std::optional<std::size_t> max_l() { return std::nullopt; }
+};
+
+template <std::size_t V> struct rule_traits<rules::min_length<V>> {
+    static constexpr std::optional<double> min_v() { return std::nullopt; }
+    static constexpr std::optional<double> max_v() { return std::nullopt; }
+    static constexpr std::optional<std::size_t> min_l() { return V; }
+    static constexpr std::optional<std::size_t> max_l() { return std::nullopt; }
+};
+
+template <std::size_t V> struct rule_traits<rules::max_length<V>> {
+    static constexpr std::optional<double> min_v() { return std::nullopt; }
+    static constexpr std::optional<double> max_v() { return std::nullopt; }
+    static constexpr std::optional<std::size_t> min_l() { return std::nullopt; }
+    static constexpr std::optional<std::size_t> max_l() { return V; }
+};
+
+} // namespace detail
+
+template <class T> struct validated_traits;
+template <class T, class... R> struct validated_traits<validated<T, R...>> {
+    static constexpr auto min_value() {
+        std::optional<double> res;
+        (..., (res = res ? res : detail::rule_traits<R>::min_v()));
+        return res;
+    }
+    static constexpr auto max_value() {
+        std::optional<double> res;
+        (..., (res = res ? res : detail::rule_traits<R>::max_v()));
+        return res;
+    }
+    static constexpr auto min_length() {
+        std::optional<std::size_t> res;
+        (..., (res = res ? res : detail::rule_traits<R>::min_l()));
+        return res;
+    }
+    static constexpr auto max_length() {
+        std::optional<std::size_t> res;
+        (..., (res = res ? res : detail::rule_traits<R>::max_l()));
+        return res;
+    }
 };
 
 } // namespace rflcpp

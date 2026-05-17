@@ -13,6 +13,7 @@
 #include <rflcpp/enum_meta.hpp>
 #include <rflcpp/policy.hpp>
 #include <rflcpp/reflect.hpp>
+#include <rflcpp/validation.hpp>
 
 namespace rflcpp {
 
@@ -38,8 +39,38 @@ template <class T>
 void emit_schema_for_type(std::ostringstream& os) {
     using U = std::remove_cvref_t<T>;
 
-    if constexpr (is_wrapped_v<U>) {
-        emit_schema_for_type<unwrap_t<U>>(os);
+    if constexpr (is_wrapped_v<U> || is_validated_v<U>) {
+        std::ostringstream inner;
+        if constexpr (is_wrapped_v<U>) emit_schema_for_type<unwrap_t<U>>(inner);
+        else emit_schema_for_type<typename U::value_type>(inner);
+
+        std::string body = inner.str();
+        if (body.starts_with('{') && body.ends_with('}'))
+            body = body.substr(1, body.size() - 2);
+
+        os << '{' << body;
+
+        if constexpr (is_wrapped_v<U>) {
+            using attrs_tuple = typename U::attributes;
+            constexpr auto desc = []<class... A>(std::tuple<A...>*) {
+                return rflcpp::detail::description_of<A...>();
+            }(static_cast<attrs_tuple*>(nullptr));
+            constexpr auto titl = []<class... A>(std::tuple<A...>*) {
+                return rflcpp::detail::title_of<A...>();
+            }(static_cast<attrs_tuple*>(nullptr));
+
+            if (!desc.empty()) { os << ",\"description\":"; emit_string(os, desc); }
+            if (!titl.empty()) { os << ",\"title\":";       emit_string(os, titl); }
+        }
+
+        if constexpr (is_validated_v<U>) {
+            using traits = validated_traits<U>;
+            if (auto min = traits::min_value())  os << ",\"minimum\":" << *min;
+            if (auto max = traits::max_value())  os << ",\"maximum\":" << *max;
+            if (auto minl = traits::min_length()) os << ",\"minLength\":" << *minl;
+            if (auto maxl = traits::max_length()) os << ",\"maxLength\":" << *maxl;
+        }
+        os << '}';
     }
     else if constexpr (optional_like<U>) {
         os << "{\"anyOf\":[";
@@ -84,8 +115,7 @@ void emit_schema_for_type(std::ostringstream& os) {
         os << "{\"type\":\"object\",\"properties\":{";
         bool first = true;
         std::vector<std::string> required;
-        for_each_field(U{}, [&]<class Ref>(std::string_view name, Ref const&) {
-            using FT = std::remove_cvref_t<Ref>;
+        template_for_each_field<U>([&]<class FT>(std::string_view name) {
             if (!first) os << ',';
             first = false;
 
@@ -105,7 +135,7 @@ void emit_schema_for_type(std::ostringstream& os) {
 
             emit_string(os, key);
             os << ':';
-            emit_schema_for_type<unwrap_t<FT>>(os);
+            emit_schema_for_type<FT>(os);
 
             if constexpr (!optional_like<unwrap_t<FT>>) required.push_back(key);
         });

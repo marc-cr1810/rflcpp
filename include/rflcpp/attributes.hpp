@@ -81,6 +81,14 @@ struct aliases {};
 template <auto V>
 struct default_to {};
 
+/// Human-readable description for documentation (e.g. JSON Schema).
+template <fixed_string S>
+struct description {};
+
+/// Human-readable title for documentation.
+template <fixed_string S>
+struct title {};
+
 } // namespace attrs
 
 namespace detail {
@@ -97,6 +105,16 @@ consteval std::string_view rename_name_for(::rflcpp::attrs::rename<N>*) {
     return N.view();
 }
 
+template <fixed_string S>
+consteval std::string_view description_for(::rflcpp::attrs::description<S>*) {
+    return S.view();
+}
+
+template <fixed_string S>
+consteval std::string_view title_for(::rflcpp::attrs::title<S>*) {
+    return S.view();
+}
+
 template <class... Attrs>
 consteval std::string_view rename_of() {
     std::string_view out{};
@@ -104,6 +122,32 @@ consteval std::string_view rename_of() {
         [&]<class A>() {
             if constexpr (requires(A* p) { rename_name_for(p); })
                 out = rename_name_for(static_cast<A*>(nullptr));
+        }.template operator()<Attrs>(),
+        ...
+    );
+    return out;
+}
+
+template <class... Attrs>
+consteval std::string_view description_of() {
+    std::string_view out{};
+    (
+        [&]<class A>() {
+            if constexpr (requires(A* p) { description_for(p); })
+                out = description_for(static_cast<A*>(nullptr));
+        }.template operator()<Attrs>(),
+        ...
+    );
+    return out;
+}
+
+template <class... Attrs>
+consteval std::string_view title_of() {
+    std::string_view out{};
+    (
+        [&]<class A>() {
+            if constexpr (requires(A* p) { title_for(p); })
+                out = title_for(static_cast<A*>(nullptr));
         }.template operator()<Attrs>(),
         ...
     );

@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstddef>
+#include <string>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
@@ -75,6 +76,20 @@ constexpr void for_each_field(T&& obj, F&& fn) {
     }(std::make_index_sequence<N>{});
 }
 
+/// Invoke `fn.template operator()<MemberType>(name)` for each non-static data
+/// member of `T`. Useful for schema generation where no instance is needed.
+template <class T, class F>
+    requires reflectable_class<T>
+constexpr void template_for_each_field(F&& fn) {
+    using U = std::remove_cvref_t<T>;
+    constexpr auto N = field_count_of<U>();
+    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+        (fn.template operator()<typename [: std::meta::type_of(std::meta::nonstatic_data_members_of(^^U, detail::rfl_ctx_for<U>())[Is]) :]> (
+            std::string_view{std::meta::identifier_of(std::meta::nonstatic_data_members_of(^^U, detail::rfl_ctx_for<U>())[Is])}), ...);
+    }(std::make_index_sequence<N>{});
+}
+
+
 template <class T>
     requires reflectable_class<T>
 constexpr auto to_tuple(T&& obj) {
@@ -92,14 +107,26 @@ constexpr T from_tuple(Tuple&& t) {
         std::forward<Tuple>(t));
 }
 
+template <class T>
+struct type_name_helper {
+    static consteval std::string_view name() {
+        constexpr auto r = ^^T;
+        if (std::meta::has_identifier(r))
+            return std::meta::identifier_of(r);
+        return std::meta::display_string_of(r);
+    }
+};
+
+template <>
+struct type_name_helper<std::string> {
+    static consteval std::string_view name() { return "string"; }
+};
+
 /// The spelled identifier of `T`, or `display_string_of` for types without
 /// one (built-ins, unnamed types).
 template <class T>
 consteval std::string_view type_name_of() {
-    constexpr auto r = ^^T;
-    if (std::meta::has_identifier(r))
-        return std::meta::identifier_of(r);
-    return std::meta::display_string_of(r);
+    return type_name_helper<std::remove_cvref_t<T>>::name();
 }
 
 } // namespace rflcpp

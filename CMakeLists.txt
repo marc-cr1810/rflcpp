@@ -4,7 +4,7 @@ project(rflcpp
     VERSION      0.1.0
     DESCRIPTION  "A modern C++26 reflection-based serialization library"
     HOMEPAGE_URL "https://github.com/your-org/rflcpp"
-    LANGUAGES    CXX
+    LANGUAGES    CXX C
 )
 
 # ----------------------------------------------------------------------------
@@ -34,7 +34,8 @@ option(RFLCPP_INSTALL        "Generate install rules for rflcpp"     ON)
 option(RFLCPP_ENABLE_JSON "Enable JSON support using nlohmann/json" ON)
 option(RFLCPP_ENABLE_XML  "Enable XML support using pugixml"       OFF)
 option(RFLCPP_ENABLE_YAML "Enable YAML support using yaml-cpp"    OFF)
-option(RFLCPP_ENABLE_TOML "Enable TOML support using tomlplusplus" OFF)
+option(RFLCPP_ENABLE_TOML    "Enable TOML support using tomlplusplus" OFF)
+option(RFLCPP_ENABLE_MSGPACK "Enable MessagePack support using mpack" ON)
 
 # ----------------------------------------------------------------------------
 # Reflection feature detection (mandatory)
@@ -100,6 +101,27 @@ if(RFLCPP_ENABLE_TOML)
             GIT_TAG v3.4.0
         )
         FetchContent_MakeAvailable(tomlplusplus)
+    endif()
+endif()
+
+if(RFLCPP_ENABLE_MSGPACK)
+    FetchContent_Declare(
+        mpack
+        GIT_REPOSITORY https://github.com/ludocode/mpack.git
+        GIT_TAG v1.1
+    )
+    FetchContent_GetProperties(mpack)
+    if(NOT mpack_POPULATED)
+        FetchContent_Populate(mpack)
+        add_library(mpack STATIC
+            ${mpack_SOURCE_DIR}/src/mpack/mpack-common.c
+            ${mpack_SOURCE_DIR}/src/mpack/mpack-expect.c
+            ${mpack_SOURCE_DIR}/src/mpack/mpack-node.c
+            ${mpack_SOURCE_DIR}/src/mpack/mpack-platform.c
+            ${mpack_SOURCE_DIR}/src/mpack/mpack-reader.c
+            ${mpack_SOURCE_DIR}/src/mpack/mpack-writer.c
+        )
+        target_include_directories(mpack PUBLIC ${mpack_SOURCE_DIR}/src/mpack)
     endif()
 endif()
 
@@ -199,6 +221,10 @@ endif()
 if(RFLCPP_ENABLE_TOML)
     list(APPEND RFLCPP_PUBLIC_HEADERS include/rflcpp/toml.hpp)
 endif()
+if(RFLCPP_ENABLE_MSGPACK)
+    list(APPEND RFLCPP_PUBLIC_HEADERS include/rflcpp/msgpack.hpp)
+endif()
+list(APPEND RFLCPP_PUBLIC_HEADERS include/rflcpp/cbor.hpp)
 
 # rflcpp is largely header-only; the few cpp files here exist so the library
 # has a real translation unit to attach version metadata and the (small)
@@ -270,6 +296,11 @@ endif()
 if(RFLCPP_ENABLE_TOML)
     target_compile_definitions(rflcpp ${RFLCPP_SCOPE} RFLCPP_ENABLE_TOML)
     target_link_libraries(rflcpp ${RFLCPP_SCOPE} $<BUILD_INTERFACE:tomlplusplus::tomlplusplus>)
+endif()
+
+if(RFLCPP_ENABLE_MSGPACK)
+    target_compile_definitions(rflcpp ${RFLCPP_SCOPE} RFLCPP_ENABLE_MSGPACK)
+    target_link_libraries(rflcpp ${RFLCPP_SCOPE} $<BUILD_INTERFACE:mpack>)
 endif()
 
 # Warnings

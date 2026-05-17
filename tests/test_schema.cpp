@@ -23,6 +23,11 @@ struct profile {
     color                             favorite;
 };
 
+struct validated_user {
+    rflcpp::attr<std::string, rflcpp::attrs::description<"User's name">, rflcpp::attrs::title<"Username">> name;
+    rflcpp::validated<int, rflcpp::rules::min_value<0>, rflcpp::rules::max_value<150>> age;
+};
+
 } // namespace
 
 TEST_CASE("Schema for a primitive type", "[schema][primitive]") {
@@ -52,4 +57,13 @@ TEST_CASE("Schema for an aggregate describes properties and required",
     auto req_pos = s.find("\"required\"");
     REQUIRE(req_pos != std::string::npos);
     REQUIRE(s.substr(req_pos).find("nickname") == std::string::npos);
+}
+
+TEST_CASE("Schema for validated type includes constraints and metadata", "[schema][metadata][validation]") {
+    auto s = rflcpp::to_json_schema<validated_user>();
+
+    REQUIRE(s.find("\"description\":\"User's name\"") != std::string::npos);
+    REQUIRE(s.find("\"title\":\"Username\"")           != std::string::npos);
+    REQUIRE(s.find("\"minimum\":0")                   != std::string::npos);
+    REQUIRE(s.find("\"maximum\":150")                 != std::string::npos);
 }

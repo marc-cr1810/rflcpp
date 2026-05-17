@@ -10,6 +10,8 @@
 #include <rflcpp/error.hpp>
 #include <rflcpp/result.hpp>
 #include <rflcpp/validation.hpp>
+#include <rflcpp/patch.hpp>
+#include <rflcpp/registry.hpp>
 
 #include <sstream>
 #include <string>
@@ -440,26 +442,34 @@ result<T> read_dispatch(const pugi::xml_node& node, std::string_view path) {
 
 template <class T>
 [[nodiscard]] std::string to_xml(const T& value, xml_options opts = {}) {
-    pugi::xml_document doc;
-    pugi::xml_node root = doc.append_child(opts.root.c_str());
-    if constexpr (reflectable_class<T>) {
-        detail::xml::write_members(root, value);
-    } else if constexpr (map_like<T>) {
-        for (auto const& [k, val] : value) detail::xml::write_dispatch(root, val, k);
-    } else if constexpr (sequence_like<T>) {
-        for (auto const& e : value) detail::xml::write_dispatch(root, e, "item");
+    if constexpr (requires { xml_codec<T>::write(std::declval<pugi::xml_node&>(), value, opts.root); }) {
+        pugi::xml_document doc;
+        xml_codec<T>::write(doc, value, opts.root);
+        std::stringstream ss;
+        doc.save(ss, opts.indent.c_str());
+        return ss.str();
     } else {
-        // For primitives, write directly into the root node's text
-        using U = std::remove_cvref_t<T>;
-        if constexpr (boolean_like<U>) root.text().set(value ? "true" : "false");
-        else if constexpr (numeric_like<U>) root.text().set(value);
-        else if constexpr (string_like<U>) root.text().set(std::string{value}.c_str());
-        else if constexpr (enum_like<U>) root.text().set(std::string{rflcpp::enum_name(value)}.c_str());
-        else detail::xml::write_dispatch(root, value, "value");
+        pugi::xml_document doc;
+        pugi::xml_node root = doc.append_child(opts.root.c_str());
+        if constexpr (reflectable_class<T>) {
+            detail::xml::write_members(root, value);
+        } else if constexpr (map_like<T>) {
+            for (auto const& [k, val] : value) detail::xml::write_dispatch(root, val, k);
+        } else if constexpr (sequence_like<T>) {
+            for (auto const& e : value) detail::xml::write_dispatch(root, e, "item");
+        } else {
+            // For primitives, write directly into the root node's text
+            using U = std::remove_cvref_t<T>;
+            if constexpr (boolean_like<U>) root.text().set(value ? "true" : "false");
+            else if constexpr (numeric_like<U>) root.text().set(value);
+            else if constexpr (string_like<U>) root.text().set(std::string{value}.c_str());
+            else if constexpr (enum_like<U>) root.text().set(std::string{rflcpp::enum_name(value)}.c_str());
+            else detail::xml::write_dispatch(root, value, "value");
+        }
+        std::stringstream ss;
+        doc.save(ss, opts.indent.c_str());
+        return ss.str();
     }
-    std::stringstream ss;
-    doc.save(ss, opts.indent.c_str());
-    return ss.str();
 }
 
 template <class T>
@@ -467,7 +477,158 @@ template <class T>
     pugi::xml_document doc;
     pugi::xml_parse_result res = doc.load_string(std::string{xml_str}.c_str());
     if (!res) return fail(error{error_kind::parse_error, res.description(), "$"});
-    return detail::xml::read_dispatch<T>(doc.first_child(), "$");
+    if constexpr (requires { xml_codec<T>::read(doc.first_child(), "$"); }) {
+        return xml_codec<T>::read(doc.first_child(), "$");
+    } else {
+        return detail::xml::read_dispatch<T>(doc.first_child(), "$");
+    }
+}
+
+// Specializations for reflection-native modernisation features
+
+template <class T>
+struct xml_codec<patch_type<T>> {
+    static void write(pugi::xml_node& node, const patch_type<T>& p, std::string_view name) {
+        pugi::xml_node child = node.append_child(std::string{name}.c_str());
+        using U = std::remove_cvref_t<T>;
+        constexpr auto N = rflcpp::field_count_of<U>();
+        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            ([&] {
+                constexpr auto member = std::meta::nonstatic_data_members_of(^^U, rflcpp::detail::rfl_ctx_for<U>())[Is];
+                constexpr auto member_name = std::meta::identifier_of(member);
+                using FT = typename [: std::meta::type_of(member) :];
+                std::string key = rflcpp::detail::serialization::effective_key<U, FT>(member_name);
+                
+                const auto& opt = std::get<Is>(p.values);
+                if (opt.has_value()) {
+                    if constexpr (rflcpp::optional_like<typename std::decay_t<decltype(opt)>::value_type>) {
+                        if (!opt->has_value()) {
+                            pugi::xml_node null_node = child.append_child(key.c_str());
+                            null_node.append_attribute("null").set_value("true");
+                        } else {
+                            rflcpp::detail::xml::write_dispatch(child, **opt, key);
+                        }
+                    } else {
+                        rflcpp::detail::xml::write_dispatch(child, *opt, key);
+                    }
+                }
+            }(), ...);
+        }(std::make_index_sequence<N>{});
+    }
+    
+    static result<patch_type<T>> read(const pugi::xml_node& node, std::string_view path = "$") {
+        patch_type<T> p;
+        std::optional<error> failure;
+        using U = std::remove_cvref_t<T>;
+        constexpr auto N = rflcpp::field_count_of<U>();
+        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            ([&] {
+                if (failure) return;
+                constexpr auto member = std::meta::nonstatic_data_members_of(^^U, rflcpp::detail::rfl_ctx_for<U>())[Is];
+                constexpr auto member_name = std::meta::identifier_of(member);
+                using FT = typename [: std::meta::type_of(member) :];
+                std::string key = rflcpp::detail::serialization::effective_key<U, FT>(member_name);
+                
+                pugi::xml_node found = node.child(key.c_str());
+                if (found) {
+                    using ValueType = typename std::decay_t<decltype(std::get<Is>(p.values))>::value_type;
+                    if constexpr (rflcpp::optional_like<ValueType>) {
+                        if (found.attribute("null").as_bool() || std::string_view{found.text().get()} == "null") {
+                            std::get<Is>(p.values) = ValueType(std::nullopt);
+                        } else {
+                            using InnerValType = typename ValueType::value_type;
+                            auto res = rflcpp::detail::xml::read_dispatch<InnerValType>(found, std::string{path} + "." + key);
+                            if (!res) failure = res.error();
+                            else      std::get<Is>(p.values) = ValueType(std::move(*res));
+                        }
+                    } else {
+                        auto res = rflcpp::detail::xml::read_dispatch<ValueType>(found, std::string{path} + "." + key);
+                        if (!res) failure = res.error();
+                        else      std::get<Is>(p.values) = std::move(*res);
+                    }
+                }
+            }(), ...);
+        }(std::make_index_sequence<N>{});
+        
+        if (failure) return fail(*failure);
+        return p;
+    }
+};
+
+template <class Registry, fixed_string_registry TagField>
+struct xml_codec<registered_any<Registry, TagField>> {
+    static void write(pugi::xml_node& node, const registered_any<Registry, TagField>& ra, std::string_view name) {
+        if (ra.value.empty()) return;
+        njson j = rflcpp::detail::json::write_dispatch(ra.value);
+        if (j.is_object()) {
+            j[std::string{TagField.view()}] = std::string{ra.value.type_name()};
+        }
+        
+        auto convert = [&](const njson& j_val, pugi::xml_node& parent, std::string_view el_name, auto& self) -> void {
+            if (j_val.is_null()) {
+                pugi::xml_node c = parent.append_child(std::string{el_name}.c_str());
+                c.append_attribute("null").set_value("true");
+                return;
+            }
+            if (j_val.is_boolean()) {
+                pugi::xml_node c = parent.append_child(std::string{el_name}.c_str());
+                c.text().set(j_val.get<bool>() ? "true" : "false");
+                return;
+            }
+            if (j_val.is_number()) {
+                pugi::xml_node c = parent.append_child(std::string{el_name}.c_str());
+                if (j_val.is_number_integer()) c.text().set(j_val.get<int64_t>());
+                else c.text().set(j_val.get<double>());
+                return;
+            }
+            if (j_val.is_string()) {
+                pugi::xml_node c = parent.append_child(std::string{el_name}.c_str());
+                c.text().set(j_val.get<std::string>().c_str());
+                return;
+            }
+            if (j_val.is_array()) {
+                pugi::xml_node arr_node = parent.append_child(std::string{el_name}.c_str());
+                for (const auto& item : j_val) self(item, arr_node, "item", self);
+                return;
+            }
+            if (j_val.is_object()) {
+                pugi::xml_node obj_node = parent.append_child(std::string{el_name}.c_str());
+                for (auto it = j_val.begin(); it != j_val.end(); ++it) {
+                    self(it.value(), obj_node, it.key(), self);
+                }
+                return;
+            }
+        };
+        convert(j, node, name, convert);
+    }
+    
+    static result<registered_any<Registry, TagField>> read(const pugi::xml_node& node, std::string_view path = "$") {
+        pugi::xml_node tag_node = node.child(std::string{TagField.view()}.c_str());
+        if (!tag_node) {
+            return fail({error_kind::missing_field, "missing tag field '" + std::string{TagField.view()} + "'", std::string{path}});
+        }
+        std::string tag = tag_node.text().get();
+        auto res = Registry::deserialize_xml(tag, node, path);
+        if (!res) return fail(res.error());
+        return registered_any<Registry, TagField>{std::move(*res)};
+    }
+};
+
+template <class... Types>
+template <class XmlNodeType>
+rflcpp::result<rflcpp::any> type_registry<Types...>::deserialize_xml(std::string_view tag, const XmlNodeType& node, std::string_view path) {
+    rflcpp::result<rflcpp::any> out = fail(error{error_kind::type_mismatch, "unknown type tag: " + std::string{tag}, std::string{path}});
+    bool found = false;
+    ([&] {
+        if (found) return;
+        if (tag == type_name_of<Types>()) {
+            found = true;
+            auto res = rflcpp::detail::xml::read_dispatch<Types>(node, path);
+            if (res) out = rflcpp::any(std::move(*res));
+            else     out = fail(res.error());
+        }
+    }(), ...);
+    return out;
 }
 
 } // namespace rflcpp

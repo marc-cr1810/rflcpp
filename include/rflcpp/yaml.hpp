@@ -10,6 +10,8 @@
 #include <rflcpp/error.hpp>
 #include <rflcpp/result.hpp>
 #include <rflcpp/validation.hpp>
+#include <rflcpp/patch.hpp>
+#include <rflcpp/registry.hpp>
 
 #include <sstream>
 #include <string>
@@ -447,6 +449,139 @@ template <class T>
     } catch (const YAML::Exception& e) {
         return fail({error_kind::parse_error, e.what(), "$"});
     }
+}
+
+// Specializations for reflection-native modernisation features
+
+template <class T>
+struct yaml_codec<patch_type<T>> {
+    static YAML::Node write(const patch_type<T>& p) {
+        YAML::Node node;
+        using U = std::remove_cvref_t<T>;
+        constexpr auto N = rflcpp::field_count_of<U>();
+        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            ([&] {
+                constexpr auto member = std::meta::nonstatic_data_members_of(^^U, rflcpp::detail::rfl_ctx_for<U>())[Is];
+                constexpr auto member_name = std::meta::identifier_of(member);
+                using FT = typename [: std::meta::type_of(member) :];
+                std::string key = rflcpp::detail::serialization::effective_key<U, FT>(member_name);
+                
+                const auto& opt = std::get<Is>(p.values);
+                if (opt.has_value()) {
+                    if constexpr (rflcpp::optional_like<typename std::decay_t<decltype(opt)>::value_type>) {
+                        if (!opt->has_value()) {
+                            node[key] = YAML::Node(YAML::NodeType::Null);
+                        } else {
+                            node[key] = rflcpp::detail::yaml::write_dispatch(**opt);
+                        }
+                    } else {
+                        node[key] = rflcpp::detail::yaml::write_dispatch(*opt);
+                    }
+                }
+            }(), ...);
+        }(std::make_index_sequence<N>{});
+        return node;
+    }
+    
+    static result<patch_type<T>> read(const YAML::Node& node, std::string_view path = "$") {
+        if (!node.IsMap()) return fail({error_kind::type_mismatch, "expected map for patch", std::string{path}});
+        patch_type<T> p;
+        std::optional<error> failure;
+        using U = std::remove_cvref_t<T>;
+        constexpr auto N = rflcpp::field_count_of<U>();
+        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            ([&] {
+                if (failure) return;
+                constexpr auto member = std::meta::nonstatic_data_members_of(^^U, rflcpp::detail::rfl_ctx_for<U>())[Is];
+                constexpr auto member_name = std::meta::identifier_of(member);
+                using FT = typename [: std::meta::type_of(member) :];
+                std::string key = rflcpp::detail::serialization::effective_key<U, FT>(member_name);
+                
+                YAML::Node found = node[key];
+                if (found.IsDefined()) {
+                    using ValueType = typename std::decay_t<decltype(std::get<Is>(p.values))>::value_type;
+                    if constexpr (rflcpp::optional_like<ValueType>) {
+                        if (found.IsNull()) {
+                            std::get<Is>(p.values) = ValueType(std::nullopt);
+                        } else {
+                            using InnerValType = typename ValueType::value_type;
+                            auto res = rflcpp::detail::yaml::read_dispatch<InnerValType>(found, std::string{path} + "." + key);
+                            if (!res) failure = res.error();
+                            else      std::get<Is>(p.values) = ValueType(std::move(*res));
+                        }
+                    } else {
+                        auto res = rflcpp::detail::yaml::read_dispatch<ValueType>(found, std::string{path} + "." + key);
+                        if (!res) failure = res.error();
+                        else      std::get<Is>(p.values) = std::move(*res);
+                    }
+                }
+            }(), ...);
+        }(std::make_index_sequence<N>{});
+        
+        if (failure) return fail(*failure);
+        return p;
+    }
+};
+
+template <class Registry, fixed_string_registry TagField>
+struct yaml_codec<registered_any<Registry, TagField>> {
+    static YAML::Node write(const registered_any<Registry, TagField>& ra) {
+        if (ra.value.empty()) return YAML::Node(YAML::NodeType::Null);
+        njson j = rflcpp::detail::json::write_dispatch(ra.value);
+        if (j.is_object()) {
+            j[std::string{TagField.view()}] = std::string{ra.value.type_name()};
+        }
+        
+        auto convert = [](const njson& j_val, auto& self) -> YAML::Node {
+            if (j_val.is_null()) return YAML::Node(YAML::NodeType::Null);
+            if (j_val.is_boolean()) return YAML::Node(j_val.get<bool>());
+            if (j_val.is_number()) return YAML::Node(j_val.get<double>());
+            if (j_val.is_string()) return YAML::Node(j_val.get<std::string>());
+            if (j_val.is_array()) {
+                YAML::Node node;
+                for (const auto& item : j_val) node.push_back(self(item, self));
+                return node;
+            }
+            if (j_val.is_object()) {
+                YAML::Node node;
+                for (auto it = j_val.begin(); it != j_val.end(); ++it) {
+                    node[it.key()] = self(it.value(), self);
+                }
+                return node;
+            }
+            return YAML::Node(YAML::NodeType::Null);
+        };
+        return convert(j, convert);
+    }
+    
+    static result<registered_any<Registry, TagField>> read(const YAML::Node& node, std::string_view path = "$") {
+        if (!node.IsMap()) return fail({error_kind::type_mismatch, "expected map for registered_any", std::string{path}});
+        auto tag_node = node[std::string{TagField.view()}];
+        if (!tag_node.IsDefined() || tag_node.IsNull()) {
+            return fail({error_kind::missing_field, "missing tag field '" + std::string{TagField.view()} + "'", std::string{path}});
+        }
+        std::string tag = tag_node.as<std::string>();
+        auto res = Registry::deserialize_yaml(tag, node, path);
+        if (!res) return fail(res.error());
+        return registered_any<Registry, TagField>{std::move(*res)};
+    }
+};
+
+template <class... Types>
+template <class YamlNodeType>
+rflcpp::result<rflcpp::any> type_registry<Types...>::deserialize_yaml(std::string_view tag, const YamlNodeType& node, std::string_view path) {
+    rflcpp::result<rflcpp::any> out = fail(error{error_kind::type_mismatch, "unknown type tag: " + std::string{tag}, std::string{path}});
+    bool found = false;
+    ([&] {
+        if (found) return;
+        if (tag == type_name_of<Types>()) {
+            found = true;
+            auto res = rflcpp::detail::yaml::read_dispatch<Types>(node, path);
+            if (res) out = rflcpp::any(std::move(*res));
+            else     out = fail(res.error());
+        }
+    }(), ...);
+    return out;
 }
 
 } // namespace rflcpp

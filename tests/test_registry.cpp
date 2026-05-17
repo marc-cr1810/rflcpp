@@ -4,6 +4,18 @@
 #include <rflcpp/registry.hpp>
 #include <rflcpp/yaml.hpp>
 
+#ifdef RFLCPP_ENABLE_XML
+#include <rflcpp/xml.hpp>
+#endif
+
+#ifdef RFLCPP_ENABLE_TOML
+#include <rflcpp/toml.hpp>
+#endif
+
+#ifdef RFLCPP_ENABLE_MSGPACK
+#include <rflcpp/msgpack.hpp>
+#endif
+
 using namespace rflcpp;
 
 struct Circle {
@@ -61,6 +73,69 @@ TEST_CASE("Compile-time type registry YAML round-trip", "[registry][yaml]") {
         auto* s = parsed->value.cast<Square>();
         REQUIRE(s != nullptr);
         REQUIRE(s->side == 10.0);
+    }
+    
+    SECTION("YAML serialization routes correctly") {
+        RegAny r = Square{12.5};
+        auto yaml_str = to_yaml(r);
+        REQUIRE(yaml_str.find("side: 12.5") != std::string::npos);
+        REQUIRE(yaml_str.find("shape_type: Square") != std::string::npos);
+    }
+}
+#endif
+
+#ifdef RFLCPP_ENABLE_XML
+TEST_CASE("Compile-time type registry XML round-trip", "[registry][xml]") {
+    SECTION("XML round-trip routes correctly") {
+        std::string xml_input = "<root><radius>5.5</radius><shape_type>Circle</shape_type></root>";
+        auto parsed = from_xml<RegAny>(xml_input);
+        REQUIRE(parsed);
+        REQUIRE(parsed->value.type_name() == "Circle");
+        
+        auto* c = parsed->value.cast<Circle>();
+        REQUIRE(c != nullptr);
+        REQUIRE(c->radius == 5.5);
+        
+        auto serialized = to_xml(*parsed);
+        REQUIRE(serialized.find("<radius>5.5</radius>") != std::string::npos);
+        REQUIRE(serialized.find("<shape_type>Circle</shape_type>") != std::string::npos);
+    }
+}
+#endif
+
+#ifdef RFLCPP_ENABLE_TOML
+TEST_CASE("Compile-time type registry TOML round-trip", "[registry][toml]") {
+    SECTION("TOML round-trip routes correctly") {
+        std::string toml_input = "side = 7.5\nshape_type = \"Square\"\n";
+        auto parsed = from_toml<RegAny>(toml_input);
+        REQUIRE(parsed);
+        REQUIRE(parsed->value.type_name() == "Square");
+        
+        auto* s = parsed->value.cast<Square>();
+        REQUIRE(s != nullptr);
+        REQUIRE(s->side == 7.5);
+        auto serialized = to_toml(*parsed);
+        REQUIRE(serialized.find("side = 7.5") != std::string::npos);
+        REQUIRE(serialized.find("shape_type") != std::string::npos);
+        REQUIRE(serialized.find("Square") != std::string::npos);
+    }
+}
+#endif
+
+#ifdef RFLCPP_ENABLE_MSGPACK
+TEST_CASE("Compile-time type registry MsgPack round-trip", "[registry][msgpack]") {
+    SECTION("MsgPack round-trip routes correctly") {
+        RegAny original = Square{22.0};
+        auto bytes = to_msgpack(original);
+        REQUIRE(!bytes.empty());
+        
+        auto parsed = from_msgpack<RegAny>(bytes);
+        REQUIRE(parsed);
+        REQUIRE(parsed->value.type_name() == "Square");
+        
+        auto* s = parsed->value.cast<Square>();
+        REQUIRE(s != nullptr);
+        REQUIRE(s->side == 22.0);
     }
 }
 #endif

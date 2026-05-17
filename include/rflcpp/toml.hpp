@@ -10,6 +10,8 @@
 #include <rflcpp/error.hpp>
 #include <rflcpp/result.hpp>
 #include <rflcpp/validation.hpp>
+#include <rflcpp/patch.hpp>
+#include <rflcpp/registry.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -470,7 +472,16 @@ result<T> read_dispatch(const ::toml::node& node, std::string_view path) {
 template <class T>
 [[nodiscard]] std::string to_toml(const T& value, toml_options opts = {}) {
     ::toml::table tbl;
-    if constexpr (reflectable_class<T>) {
+    if constexpr (requires { toml_codec<T>::write(value); }) {
+        auto node = toml_codec<T>::write(value);
+        if (node) {
+            if (auto* t = node->as_table()) {
+                tbl = *t;
+            } else {
+                tbl.insert("value", std::move(*node));
+            }
+        }
+    } else if constexpr (reflectable_class<T>) {
         detail::toml::write_members(tbl, value);
     } else {
         auto node = detail::toml::write_dispatch(value);
@@ -485,7 +496,9 @@ template <class T>
 [[nodiscard]] result<T> from_toml(std::string_view toml_str) {
     try {
         ::toml::table tbl = ::toml::parse(toml_str);
-        if constexpr (reflectable_class<T>) {
+        if constexpr (requires { toml_codec<T>::read(tbl, "$"); }) {
+            return toml_codec<T>::read(tbl, "$");
+        } else if constexpr (reflectable_class<T>) {
             return detail::toml::read_dispatch<T>(tbl, "$");
         } else {
             if (auto found = tbl.get("value")) {
@@ -496,6 +509,146 @@ template <class T>
     } catch (const ::toml::parse_error& e) {
         return fail(error{error_kind::parse_error, std::string{e.description()}, "$"});
     }
+}
+
+// Specializations for reflection-native modernisation features
+
+template <class T>
+struct toml_codec<patch_type<T>> {
+    static std::unique_ptr<::toml::node> write(const patch_type<T>& p) {
+        auto tbl = std::make_unique<::toml::table>();
+        using U = std::remove_cvref_t<T>;
+        constexpr auto N = rflcpp::field_count_of<U>();
+        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            ([&] {
+                constexpr auto member = std::meta::nonstatic_data_members_of(^^U, rflcpp::detail::rfl_ctx_for<U>())[Is];
+                constexpr auto member_name = std::meta::identifier_of(member);
+                using FT = typename [: std::meta::type_of(member) :];
+                std::string key = rflcpp::detail::serialization::effective_key<U, FT>(member_name);
+                
+                const auto& opt = std::get<Is>(p.values);
+                if (opt.has_value()) {
+                    if constexpr (rflcpp::optional_like<typename std::decay_t<decltype(opt)>::value_type>) {
+                        if (!opt->has_value()) {
+                            // Null/empty field
+                        } else {
+                            auto node = rflcpp::detail::toml::write_dispatch(**opt);
+                            if (node) tbl->insert(key, std::move(*node));
+                        }
+                    } else {
+                        auto node = rflcpp::detail::toml::write_dispatch(*opt);
+                        if (node) tbl->insert(key, std::move(*node));
+                    }
+                }
+            }(), ...);
+        }(std::make_index_sequence<N>{});
+        return tbl;
+    }
+    
+    static result<patch_type<T>> read(const ::toml::node& node, std::string_view path = "$") {
+        auto tbl = node.as_table();
+        if (!tbl) return fail({error_kind::type_mismatch, "expected table for patch", std::string{path}});
+        patch_type<T> p;
+        std::optional<error> failure;
+        using U = std::remove_cvref_t<T>;
+        constexpr auto N = rflcpp::field_count_of<U>();
+        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            ([&] {
+                if (failure) return;
+                constexpr auto member = std::meta::nonstatic_data_members_of(^^U, rflcpp::detail::rfl_ctx_for<U>())[Is];
+                constexpr auto member_name = std::meta::identifier_of(member);
+                using FT = typename [: std::meta::type_of(member) :];
+                std::string key = rflcpp::detail::serialization::effective_key<U, FT>(member_name);
+                
+                auto found = tbl->get(key);
+                if (found) {
+                    using ValueType = typename std::decay_t<decltype(std::get<Is>(p.values))>::value_type;
+                    if constexpr (rflcpp::optional_like<ValueType>) {
+                        using InnerValType = typename ValueType::value_type;
+                        auto res = rflcpp::detail::toml::read_dispatch<InnerValType>(*found, std::string{path} + "." + key);
+                        if (!res) failure = res.error();
+                        else      std::get<Is>(p.values) = ValueType(std::move(*res));
+                    } else {
+                        auto res = rflcpp::detail::toml::read_dispatch<ValueType>(*found, std::string{path} + "." + key);
+                        if (!res) failure = res.error();
+                        else      std::get<Is>(p.values) = std::move(*res);
+                    }
+                }
+            }(), ...);
+        }(std::make_index_sequence<N>{});
+        
+        if (failure) return fail(*failure);
+        return p;
+    }
+};
+
+template <class Registry, fixed_string_registry TagField>
+struct toml_codec<registered_any<Registry, TagField>> {
+    static std::unique_ptr<::toml::node> write(const registered_any<Registry, TagField>& ra) {
+        if (ra.value.empty()) return nullptr;
+        njson j = rflcpp::detail::json::write_dispatch(ra.value);
+        if (j.is_object()) {
+            j[std::string{TagField.view()}] = std::string{ra.value.type_name()};
+        }
+        
+        auto convert = [](const njson& j_val, auto& self) -> std::unique_ptr<::toml::node> {
+            if (j_val.is_null()) return nullptr;
+            if (j_val.is_boolean()) return std::make_unique<::toml::value<bool>>(j_val.get<bool>());
+            if (j_val.is_number()) {
+                if (j_val.is_number_integer()) return std::make_unique<::toml::value<int64_t>>(j_val.get<int64_t>());
+                return std::make_unique<::toml::value<double>>(j_val.get<double>());
+            }
+            if (j_val.is_string()) return std::make_unique<::toml::value<std::string>>(j_val.get<std::string>());
+            if (j_val.is_array()) {
+                auto arr = std::make_unique<::toml::array>();
+                for (const auto& item : j_val) {
+                    auto node = self(item, self);
+                    if (node) arr->push_back(std::move(*node));
+                }
+                return arr;
+            }
+            if (j_val.is_object()) {
+                auto tbl = std::make_unique<::toml::table>();
+                for (auto it = j_val.begin(); it != j_val.end(); ++it) {
+                    auto node = self(it.value(), self);
+                    if (node) tbl->insert(it.key(), std::move(*node));
+                }
+                return tbl;
+            }
+            return nullptr;
+        };
+        return convert(j, convert);
+    }
+    
+    static result<registered_any<Registry, TagField>> read(const ::toml::node& node, std::string_view path = "$") {
+        auto tbl = node.as_table();
+        if (!tbl) return fail({error_kind::type_mismatch, "expected table for registered_any", std::string{path}});
+        auto tag_node = tbl->get(std::string{TagField.view()});
+        if (!tag_node || !tag_node->is_string()) {
+            return fail({error_kind::missing_field, "missing tag field '" + std::string{TagField.view()} + "'", std::string{path}});
+        }
+        std::string tag = std::string{tag_node->as_string()->get()};
+        auto res = Registry::deserialize_toml(tag, node, path);
+        if (!res) return fail(res.error());
+        return registered_any<Registry, TagField>{std::move(*res)};
+    }
+};
+
+template <class... Types>
+template <class TomlNodeType>
+rflcpp::result<rflcpp::any> type_registry<Types...>::deserialize_toml(std::string_view tag, const TomlNodeType& node, std::string_view path) {
+    rflcpp::result<rflcpp::any> out = fail(error{error_kind::type_mismatch, "unknown type tag: " + std::string{tag}, std::string{path}});
+    bool found = false;
+    ([&] {
+        if (found) return;
+        if (tag == type_name_of<Types>()) {
+            found = true;
+            auto res = rflcpp::detail::toml::read_dispatch<Types>(node, path);
+            if (res) out = rflcpp::any(std::move(*res));
+            else     out = fail(res.error());
+        }
+    }(), ...);
+    return out;
 }
 
 } // namespace rflcpp

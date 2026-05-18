@@ -22,6 +22,10 @@
 #include <type_traits>
 #include <variant>
 
+namespace rflcpp::detail::any {
+struct toml_format_tag;
+}
+
 namespace rflcpp {
 
 struct toml_options {
@@ -132,9 +136,46 @@ node_ptr write_variant(const Variant& v) {
     }, v);
 }
 
+} // namespace detail::toml
+} // namespace rflcpp
+
+namespace rflcpp::detail::any {
+template <class T>
+struct toml_serializer_populator {
+    static void populate() {
+        rflcpp::detail::any::toml_serializer_holder<T>::serialize_fn = [](const void* ptr, void* output) {
+            auto* node = static_cast<std::unique_ptr<::toml::node>*>(output);
+            *node = rflcpp::detail::toml::write_dispatch(*static_cast<const T*>(ptr));
+        };
+    }
+};
+} // namespace rflcpp::detail::any
+
+namespace rflcpp {
+template <class T>
+struct toml_populator_helper<T, void> {
+    static void populate() {
+        detail::any::toml_serializer_populator<T>::populate();
+    }
+};
+}
+
+namespace rflcpp {
+namespace detail::toml {
+
+template <class T>
+struct toml_populator_trigger {
+    static inline struct init {
+        init() {
+            detail::any::toml_serializer_populator<T>::populate();
+        }
+    } instance;
+};
+
 template <class T>
 node_ptr write_dispatch(const T& v) {
     using U = std::remove_cvref_t<T>;
+    (void)&toml_populator_trigger<U>::instance;
 
     if constexpr (requires { toml_codec<U>::write(v); }) {
         return toml_codec<U>::write(v);
@@ -683,6 +724,20 @@ template <class T>
 }
 
 } // namespace toml
+
+template <>
+struct toml_codec<any> {
+    static std::unique_ptr<::toml::node> write(const any& a) {
+        using registry = rflcpp::detail::any::any_serializer_registry<rflcpp::detail::any::toml_format_tag>;
+        auto fn = registry::get(a.type_id());
+        if (fn) {
+            std::unique_ptr<::toml::node> node;
+            fn(a.ptr(), &node);
+            return node;
+        }
+        return nullptr;
+    }
+};
 
 } // namespace rflcpp
 

@@ -20,6 +20,10 @@
 #include <type_traits>
 #include <variant>
 
+namespace rflcpp::detail::any {
+struct yaml_format_tag;
+}
+
 namespace rflcpp {
 
 struct yaml_options {
@@ -119,9 +123,46 @@ YAML::Node write_variant(const Variant& v) {
     }, v);
 }
 
+} // namespace detail::yaml
+} // namespace rflcpp
+
+namespace rflcpp::detail::any {
+template <class T>
+struct yaml_serializer_populator {
+    static void populate() {
+        rflcpp::detail::any::yaml_serializer_holder<T>::serialize_fn = [](const void* ptr, void* output) {
+            auto* node = static_cast<YAML::Node*>(output);
+            *node = rflcpp::detail::yaml::write_dispatch(*static_cast<const T*>(ptr));
+        };
+    }
+};
+} // namespace rflcpp::detail::any
+
+namespace rflcpp {
+template <class T>
+struct yaml_populator_helper<T, void> {
+    static void populate() {
+        detail::any::yaml_serializer_populator<T>::populate();
+    }
+};
+}
+
+namespace rflcpp {
+namespace detail::yaml {
+
+template <class T>
+struct yaml_populator_trigger {
+    static inline struct init {
+        init() {
+            detail::any::yaml_serializer_populator<T>::populate();
+        }
+    } instance;
+};
+
 template <class T>
 YAML::Node write_dispatch(const T& v) {
     using U = std::remove_cvref_t<T>;
+    (void)&yaml_populator_trigger<U>::instance;
 
     if constexpr (requires { yaml_codec<U>::write(v); }) {
         return yaml_codec<U>::write(v);
@@ -617,6 +658,20 @@ template <class T>
 }
 
 } // namespace yaml
+
+template <>
+struct yaml_codec<any> {
+    static YAML::Node write(const any& a) {
+        using registry = rflcpp::detail::any::any_serializer_registry<rflcpp::detail::any::yaml_format_tag>;
+        auto fn = registry::get(a.type_id());
+        if (fn) {
+            YAML::Node node;
+            fn(a.ptr(), &node);
+            return node;
+        }
+        return {};
+    }
+};
 
 } // namespace rflcpp
 

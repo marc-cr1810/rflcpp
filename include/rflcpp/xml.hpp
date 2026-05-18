@@ -20,6 +20,10 @@
 #include <type_traits>
 #include <variant>
 
+namespace rflcpp::detail::any {
+struct xml_format_tag;
+}
+
 namespace rflcpp {
 
 struct xml_options {
@@ -135,9 +139,50 @@ void write_variant(pugi::xml_node& node, const Variant& v, std::string_view name
     }, v);
 }
 
+} // namespace detail::xml
+} // namespace rflcpp
+
+namespace rflcpp::detail::any {
+template <class T>
+struct xml_serializer_populator {
+    static void populate() {
+        rflcpp::detail::any::xml_serializer_holder<T>::serialize_fn = [](const void* ptr, void* output) {
+            struct params {
+                pugi::xml_node& node;
+                std::string_view name;
+            };
+            auto* p = static_cast<params*>(output);
+            rflcpp::detail::xml::write_dispatch(p->node, *static_cast<const T*>(ptr), p->name);
+        };
+    }
+};
+} // namespace rflcpp::detail::any
+
+namespace rflcpp {
+template <class T>
+struct xml_populator_helper<T, void> {
+    static void populate() {
+        detail::any::xml_serializer_populator<T>::populate();
+    }
+};
+}
+
+namespace rflcpp {
+namespace detail::xml {
+
+template <class T>
+struct xml_populator_trigger {
+    static inline struct init {
+        init() {
+            detail::any::xml_serializer_populator<T>::populate();
+        }
+    } instance;
+};
+
 template <class T>
 void write_dispatch(pugi::xml_node& node, const T& v, std::string_view name) {
     using U = std::remove_cvref_t<T>;
+    (void)&xml_populator_trigger<U>::instance;
 
     if constexpr (requires { xml_codec<U>::write(node, v, name); }) {
         xml_codec<U>::write(node, v, name);
@@ -645,6 +690,22 @@ template <class T>
 }
 
 } // namespace xml
+
+template <>
+struct xml_codec<any> {
+    static void write(pugi::xml_node& node, const any& a, std::string_view name) {
+        using registry = rflcpp::detail::any::any_serializer_registry<rflcpp::detail::any::xml_format_tag>;
+        auto fn = registry::get(a.type_id());
+        if (fn) {
+            struct params {
+                pugi::xml_node& node;
+                std::string_view name;
+            };
+            params p{node, name};
+            fn(a.ptr(), &p);
+        }
+    }
+};
 
 } // namespace rflcpp
 

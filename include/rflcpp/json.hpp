@@ -22,6 +22,10 @@
 #include <variant>
 #include <vector>
 
+namespace rflcpp::detail::any {
+struct json_format_tag;
+}
+
 namespace rflcpp {
 
 using njson = nlohmann::json;
@@ -124,9 +128,45 @@ njson write_variant(const Variant& v) {
     }, v);
 }
 
+} // namespace detail::json
+} // namespace rflcpp
+
+namespace rflcpp::detail::any {
+template <class T>
+struct json_serializer_populator {
+    static void populate() {
+        rflcpp::detail::any::json_serializer_holder<T>::serialize_fn = [](const void* ptr, void* output) {
+            *static_cast<njson*>(output) = rflcpp::detail::json::write_dispatch(*static_cast<const T*>(ptr));
+        };
+    }
+};
+} // namespace rflcpp::detail::any
+
+namespace rflcpp {
+template <class T>
+struct json_populator_helper<T, void> {
+    static void populate() {
+        detail::any::json_serializer_populator<T>::populate();
+    }
+};
+}
+
+namespace rflcpp {
+namespace detail::json {
+
+template <class T>
+struct json_populator_trigger {
+    static inline struct init {
+        init() {
+            detail::any::json_serializer_populator<T>::populate();
+        }
+    } instance;
+};
+
 template <class T>
 njson write_dispatch(const T& v) {
     using U = std::remove_cvref_t<T>;
+    (void)&json_populator_trigger<U>::instance;
 
     if constexpr (requires { json_codec<U>::write(v); }) {
         return json_codec<U>::write(v);
@@ -479,7 +519,14 @@ njson to_json_dispatch_helper(const T& v) {
 template <>
 struct json_codec<any, void> {
     static njson write(const any& a) {
-        return a.to_json();
+        using registry = rflcpp::detail::any::any_serializer_registry<rflcpp::detail::any::json_format_tag>;
+        auto fn = registry::get(a.type_id());
+        if (fn) {
+            njson output;
+            fn(a.ptr(), &output);
+            return output;
+        }
+        return nullptr;
     }
 };
 

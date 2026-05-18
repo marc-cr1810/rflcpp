@@ -108,7 +108,7 @@ rflcpp::result<T> coerce_arg(const rflcpp::any& arg, std::string_view method_nam
     // 4. JSON fallback (if enabled)
 #ifdef RFLCPP_ENABLE_JSON
     try {
-        auto js_str = arg.to_json().dump();
+        auto js_str = rflcpp::to_json(arg);
         auto res = rflcpp::from_json<T>(js_str);
         if (res.has_value()) {
             return std::move(*res);

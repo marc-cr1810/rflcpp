@@ -23,6 +23,10 @@
 #include <vector>
 #include <span>
 
+namespace rflcpp::detail::any {
+struct msgpack_format_tag;
+}
+
 namespace rflcpp {
 
 template <class T, class = void>
@@ -66,9 +70,46 @@ void write_members(mpack_writer_t* writer, const T& obj) {
     });
 }
 
+} // namespace detail::msgpack
+} // namespace rflcpp
+
+namespace rflcpp::detail::any {
+template <class T>
+struct msgpack_serializer_populator {
+    static void populate() {
+        rflcpp::detail::any::msgpack_serializer_holder<T>::serialize_fn = [](const void* ptr, void* output) {
+            auto* writer = static_cast<mpack_writer_t*>(output);
+            rflcpp::detail::msgpack::write_dispatch(writer, *static_cast<const T*>(ptr));
+        };
+    }
+};
+} // namespace rflcpp::detail::any
+
+namespace rflcpp {
+template <class T>
+struct msgpack_populator_helper<T, void> {
+    static void populate() {
+        detail::any::msgpack_serializer_populator<T>::populate();
+    }
+};
+}
+
+namespace rflcpp {
+namespace detail::msgpack {
+
+template <class T>
+struct msgpack_populator_trigger {
+    static inline struct init {
+        init() {
+            detail::any::msgpack_serializer_populator<T>::populate();
+        }
+    } instance;
+};
+
 template <class T>
 void write_dispatch(mpack_writer_t* writer, const T& v) {
     using U = std::remove_cvref_t<T>;
+    (void)&msgpack_populator_trigger<U>::instance;
 
     if constexpr (requires { msgpack_codec<U>::write(writer, v); }) {
         msgpack_codec<U>::write(writer, v);
@@ -457,6 +498,17 @@ template <class T>
 }
 
 } // namespace msgpack
+
+template <>
+struct msgpack_codec<any> {
+    static void write(mpack_writer_t* writer, const any& a) {
+        using registry = rflcpp::detail::any::any_serializer_registry<rflcpp::detail::any::msgpack_format_tag>;
+        auto fn = registry::get(a.type_id());
+        if (fn) {
+            fn(a.ptr(), writer);
+        }
+    }
+};
 
 } // namespace rflcpp
 

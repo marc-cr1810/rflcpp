@@ -5,6 +5,7 @@ set(RFLCPP_TEST_SOURCES
     test_reflect.cpp
     test_validation.cpp
     test_json.cpp
+    test_json_direct.cpp
     test_enum.cpp
     test_attributes.cpp
     test_policy.cpp

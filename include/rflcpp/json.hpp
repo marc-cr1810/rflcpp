@@ -701,4 +701,6 @@ template <class T>
 
 } // namespace rflcpp
 
+#include <rflcpp/json_direct.hpp>
+
 #endif // RFLCPP_ENABLE_JSON

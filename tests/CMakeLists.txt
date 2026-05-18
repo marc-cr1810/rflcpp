@@ -9,6 +9,7 @@ set(RFLCPP_TEST_SOURCES
     test_enum.cpp
     test_attributes.cpp
     test_policy.cpp
+    test_policy_embedded.cpp
     test_variant.cpp
     test_derive.cpp
     test_schema.cpp

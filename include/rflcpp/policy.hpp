@@ -1,20 +1,15 @@
 // rflcpp/policy.hpp - Per-type customization knobs.
 // SPDX-License-Identifier: MIT
-//
-// Each policy is a primary template users specialize for their own types:
-//
-//   rflcpp::access_policy<T>     - whether to walk private/protected members
-//   rflcpp::naming_policy<T>     - default member-name transformation
-//   rflcpp::strict_policy<T>     - whether unknown fields are errors
-//   rflcpp::variant_policy<T>    - how std::variant<...> is encoded
-//   rflcpp::base_policy<T>       - whether to traverse base-class members
 
 #pragma once
 
 #include <cctype>
+#include <concepts>
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <type_traits>
 
 #include <rflcpp/attributes.hpp>
 
@@ -25,40 +20,13 @@ enum class access_mode {
     public_only,
 };
 
-template <class T>
-struct access_policy {
-    static constexpr access_mode mode = access_mode::public_only;
-};
-
-template <class T>
-struct strict_policy {
-    static constexpr bool strict = false;
-};
-
 enum class base_mode {
     flatten,
     nested,
     skip,
 };
 
-template <class T>
-struct base_policy {
-    static constexpr base_mode mode = base_mode::flatten;
-};
-
-/// Mirrors serde's four variant tagging strategies:
-///   external  -  { "Alt": payload }                       (default)
-///   internal  -  { "tag": "Alt", ...fields_of_alt... }
-///   adjacent  -  { "tag": "Alt", "content": payload }
-///   untagged  -  payload directly; on read, try each alternative in order
 enum class variant_tagging { external, internal, adjacent, untagged };
-
-template <class>
-struct variant_policy {
-    static constexpr variant_tagging   tagging       = variant_tagging::external;
-    static constexpr std::string_view  tag_field     = "type";
-    static constexpr std::string_view  content_field = "content";
-};
 
 enum class case_style {
     as_written,
@@ -70,6 +38,185 @@ enum class case_style {
     lower_case,
 };
 
+// --- Namespace Policy Tags for Class-Embedded Policies ---
+namespace policy {
+
+struct strict {
+    static constexpr bool value = true;
+};
+struct lenient {
+    static constexpr bool value = false;
+};
+
+struct access_all {
+    static constexpr access_mode value = access_mode::all;
+};
+struct access_public {
+    static constexpr access_mode value = access_mode::public_only;
+};
+
+struct base_flatten {
+    static constexpr base_mode value = base_mode::flatten;
+};
+struct base_nested {
+    static constexpr base_mode value = base_mode::nested;
+};
+struct base_skip {
+    static constexpr base_mode value = base_mode::skip;
+};
+
+template <variant_tagging Tagging, fixed_string TagField = "type", fixed_string ContentField = "content">
+struct variant {
+    static constexpr variant_tagging tagging = Tagging;
+    static constexpr std::string_view tag_field = TagField.view();
+    static constexpr std::string_view content_field = ContentField.view();
+};
+
+using external_variant = variant<variant_tagging::external>;
+using internal_variant = variant<variant_tagging::internal>;
+using adjacent_variant = variant<variant_tagging::adjacent>;
+using untagged_variant = variant<variant_tagging::untagged>;
+
+template <case_style Style>
+struct naming {
+    static constexpr case_style style = Style;
+};
+
+using as_written = naming<case_style::as_written>;
+using snake_case = naming<case_style::snake_case>;
+using upper_snake_case = naming<case_style::upper_snake_case>;
+using camel_case = naming<case_style::camel_case>;
+using pascal_case = naming<case_style::pascal_case>;
+using kebab_case = naming<case_style::kebab_case>;
+using lower_case = naming<case_style::lower_case>;
+
+} // namespace policy
+
+// --- Compile-Time Helper for Extracting Policies from Tuples ---
+
+template <class T, class = void>
+struct is_complete : std::false_type {};
+
+template <class T>
+struct is_complete<T, std::void_t<decltype(sizeof(T))>> : std::true_type {};
+
+template <class T>
+inline constexpr bool is_complete_v = is_complete<T>::value;
+
+template <class T>
+concept has_embedded_policies = is_complete_v<T> && requires {
+    { T::rflcpp_policies };
+};
+
+namespace detail {
+
+struct default_strict_tag { static constexpr bool value = false; };
+struct default_access_tag { static constexpr access_mode value = access_mode::public_only; };
+struct default_base_tag { static constexpr base_mode value = base_mode::flatten; };
+struct default_variant_tag {
+    static constexpr variant_tagging tagging = variant_tagging::external;
+    static constexpr std::string_view tag_field = "type";
+    static constexpr std::string_view content_field = "content";
+};
+struct default_naming_tag { static constexpr case_style style = case_style::as_written; };
+
+template <class T, bool HasPolicies>
+struct extract_policies_helper {
+    using type = std::tuple<>;
+};
+
+template <class T>
+struct extract_policies_helper<T, true> {
+    using type = decltype(T::rflcpp_policies);
+};
+
+template <class T>
+using extract_policies_t = typename extract_policies_helper<T, has_embedded_policies<T>>::type;
+
+template <class T>
+struct is_strict_tag {
+    static constexpr bool value = requires { { T::value } -> std::convertible_to<bool>; };
+};
+
+template <class T>
+struct is_access_tag {
+    static constexpr bool value = requires { { T::value } -> std::convertible_to<access_mode>; };
+};
+
+template <class T>
+struct is_base_tag {
+    static constexpr bool value = requires { { T::value } -> std::convertible_to<base_mode>; };
+};
+
+template <class T>
+struct is_variant_tag {
+    static constexpr bool value = requires { { T::tagging } -> std::convertible_to<variant_tagging>; };
+};
+
+template <class T>
+struct is_naming_tag {
+    static constexpr bool value = requires { { T::style } -> std::convertible_to<case_style>; };
+};
+
+template <class Tuple, template <class> class Predicate, class Default, size_t Index, bool OutOfBounds>
+struct find_policy_helper {
+    using current = std::tuple_element_t<Index, Tuple>;
+    using type = std::conditional_t<
+        Predicate<current>::value,
+        current,
+        typename find_policy_helper<Tuple, Predicate, Default, Index + 1, (Index + 1 >= std::tuple_size_v<Tuple>)>::type
+    >;
+};
+
+template <class Tuple, template <class> class Predicate, class Default, size_t Index>
+struct find_policy_helper<Tuple, Predicate, Default, Index, true> {
+    using type = Default;
+};
+
+template <class Tuple, template <class> class Predicate, class Default>
+struct find_policy {
+    using type = typename find_policy_helper<Tuple, Predicate, Default, 0, (std::tuple_size_v<Tuple> == 0)>::type;
+};
+
+template <class Tuple, template <class> class Predicate, class Default>
+using find_policy_t = typename find_policy<Tuple, Predicate, Default>::type;
+
+} // namespace detail
+
+// --- Trait Structures ---
+
+template <class T>
+struct strict_policy {
+    using Tuple = detail::extract_policies_t<T>;
+    using Match = detail::find_policy_t<Tuple, detail::is_strict_tag, detail::default_strict_tag>;
+    static constexpr bool strict = Match::value;
+};
+
+template <class T>
+struct access_policy {
+    using Tuple = detail::extract_policies_t<T>;
+    using Match = detail::find_policy_t<Tuple, detail::is_access_tag, detail::default_access_tag>;
+    static constexpr access_mode mode = Match::value;
+};
+
+template <class T>
+struct base_policy {
+    using Tuple = detail::extract_policies_t<T>;
+    using Match = detail::find_policy_t<Tuple, detail::is_base_tag, detail::default_base_tag>;
+    static constexpr base_mode mode = Match::value;
+};
+
+template <class T>
+struct variant_policy {
+private:
+    using Tuple = detail::extract_policies_t<T>;
+    using Match = detail::find_policy_t<Tuple, detail::is_variant_tag, detail::default_variant_tag>;
+public:
+    static constexpr variant_tagging   tagging       = Match::tagging;
+    static constexpr std::string_view  tag_field     = Match::tag_field;
+    static constexpr std::string_view  content_field = Match::content_field;
+};
+
 namespace detail {
 
 constexpr bool is_upper(char c) noexcept { return c >= 'A' && c <= 'Z'; }
@@ -78,8 +225,6 @@ constexpr bool is_digit(char c) noexcept { return c >= '0' && c <= '9'; }
 constexpr char to_upper(char c) noexcept { return is_lower(c) ? char(c - ('a'-'A')) : c; }
 constexpr char to_lower(char c) noexcept { return is_upper(c) ? char(c + ('a'-'A')) : c; }
 
-/// Splits `in` into words on underscore/hyphen/space and on camelCase /
-/// PascalCase boundaries (with "XMLHttp" -> "XML","Http").
 template <class Sink>
 constexpr void split_words(std::string_view in, Sink&& sink) {
     std::string buf;
@@ -157,7 +302,11 @@ constexpr std::string apply_case(std::string_view in, case_style style) {
 
 template <class T>
 struct naming_policy {
-    static constexpr case_style style = case_style::as_written;
+private:
+    using Tuple = detail::extract_policies_t<T>;
+    using Match = detail::find_policy_t<Tuple, detail::is_naming_tag, detail::default_naming_tag>;
+public:
+    static constexpr case_style style = Match::style;
 
     static std::string transform(std::string_view member_name) {
         return detail::apply_case(member_name, style);

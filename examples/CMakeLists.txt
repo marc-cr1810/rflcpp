@@ -21,6 +21,8 @@ set(RFLCPP_EXAMPLES
     15_patch_and_diff
     16_type_registry
     17_method_invocation
+    18_direct_json_serialization
+    19_embedded_policies_and_constexpr_schema
 )
 
 foreach(example IN LISTS RFLCPP_EXAMPLES)

@@ -88,3 +88,56 @@ struct json_codec<Color> {
 ```
 
 See `examples/06_custom_codec/` for a complete working example.
+
+## High-Performance Zero-Copy Direct JSON Serialization
+
+For performance-critical code paths where the overhead of creating intermediate JSON ASTs (such as `nlohmann::json`) is unacceptable, `rflcpp` provides a zero-copy, direct-to-buffer JSON serializer.
+
+### Direct Writing APIs
+
+```cpp
+#include <rflcpp/rflcpp.hpp>
+
+namespace rflcpp::json::direct {
+    // Serializes directly to a std::string (skips AST entirely, pre-reserves buffer)
+    template <class T>
+    std::string write(const T& val);
+
+    // Serializes directly to a stack or pre-allocated heap buffer (zero heap allocations)
+    template <class T>
+    rflcpp::result<size_t> write_to_span(std::span<char> buffer, const T& val);
+}
+```
+
+### Example Usage
+
+```cpp
+#include <array>
+#include <iostream>
+#include <span>
+#include <rflcpp/rflcpp.hpp>
+
+struct SubRecord {
+    double value;
+    bool active;
+};
+
+struct DataRecord {
+    int id;
+    std::vector<int> codes;
+    SubRecord sub;
+};
+
+int main() {
+    DataRecord record{.id = 42, .codes = {1, 2, 3}, .sub = {3.14, true}};
+
+    // Zero-heap-allocation serialization on the stack
+    std::array<char, 512> buffer{};
+    auto bytes_written = rflcpp::json::direct::write_to_span(std::span{buffer}, record);
+    if (bytes_written) {
+        std::cout << std::string_view{buffer.data(), *bytes_written} << "\n";
+    }
+}
+```
+
+See `examples/18_direct_json_serialization/` for a complete example.

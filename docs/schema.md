@@ -108,3 +108,49 @@ The output of `to_json_schema<Profile>()` will be a Draft 2020-12 compliant sche
   ]
 }
 ```
+
+---
+
+## Compile-Time JSON Schema Generation
+
+In addition to dynamic runtime schema generation, `rflcpp` enables fully **compile-time static schema generation**.
+
+### Consteval Schema API
+
+```cpp
+#include <rflcpp/schema.hpp>
+
+namespace rflcpp {
+    // Generates the JSON Schema at compile-time as a zero-copy std::string_view
+    template <class T>
+    consteval std::string_view to_json_schema_view();
+}
+```
+
+### Static Verification Example
+
+Because `to_json_schema_view` is `consteval`, you can statically verify, inspect, or build upon schemas during compilation using `static_assert`:
+
+```cpp
+#include <rflcpp/rflcpp.hpp>
+#include <rflcpp/schema.hpp>
+
+struct Config {
+    int port;
+    std::string host;
+};
+
+// Assert schema properties at compile-time!
+static_assert(rflcpp::to_json_schema_view<int>() == 
+    "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"int\",\"$id\":\"rflcpp://int\",\"type\":\"integer\"}"
+);
+
+static_assert(rflcpp::to_json_schema_view<Config>().find("\"required\":[\"port\",\"host\"]") != std::string_view::npos);
+
+int main() {
+    // High-performance runtime retrieval (zero overhead, copies from pre-compiled static view)
+    std::string schema = rflcpp::to_json_schema<Config>();
+}
+```
+
+See `examples/19_embedded_policies_and_constexpr_schema/` for a complete example.

@@ -103,3 +103,43 @@ The `rflcpp::reflectable_class` concept currently excludes:
 leaving every other class type as a candidate for reflective inspection.
 You can always specialize format codecs (e.g. `rflcpp::json_codec<T>`) to override how a
 particular type is handled.
+
+## Class-Embedded Reflection Policies
+
+`rflcpp` supports collocating serialization and parsing policies directly inside class definitions by declaring a `static constexpr auto rflcpp_policies` tuple. This completely avoids writing verbose external template specializations and keeps all configurations local.
+
+### Available Policies
+
+All policies are grouped under the `rflcpp::policy` namespace:
+
+| Policy Tag | Description |
+|---|---|
+| `policy::strict` | Reject extra/unrecognized fields during deserialization. |
+| `policy::lenient` | Ignore unrecognized fields during deserialization (default). |
+| `policy::access_all` | Reflect all private and protected members (requires friend declaration). |
+| `policy::access_public` | Only reflect public members (default). |
+| `policy::base_flatten` | Flatten base class fields into the derived object (default). |
+| `policy::base_nested` | Nest base class fields under a key named after the base type. |
+| `policy::base_skip` | Do not reflect fields from the base class. |
+| `policy::naming<case_style>` | Automatically transform member names casing. Aliases: `policy::camel_case`, `policy::snake_case`, `policy::pascal_case`, `policy::kebab_case`, `policy::upper_snake_case`. |
+| `policy::variant<Tagging, TagField>` | Variant formatting. Aliases: `policy::external_variant`, `policy::internal_variant`, `policy::adjacent_variant`, `policy::untagged_variant`. |
+
+### Example Usage
+
+```cpp
+#include <tuple>
+#include <rflcpp/rflcpp.hpp>
+
+struct User {
+    // Collocate all reflection configurations here!
+    static constexpr auto rflcpp_policies = std::make_tuple(
+        rflcpp::policy::camel_case{},  // member names transformed to camelCase automatically
+        rflcpp::policy::strict{}       // extra fields in JSON will cause a parsing failure
+    );
+
+    int user_id;       // serialized as "userId"
+    std::string name;  // serialized as "name"
+};
+```
+
+See `examples/19_embedded_policies_and_constexpr_schema/` for a complete example.

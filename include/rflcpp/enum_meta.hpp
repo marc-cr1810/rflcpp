@@ -222,10 +222,19 @@ constexpr std::vector<std::string> enum_flag_names(E value) {
         }
     }
     if (remaining != 0) {
-        char buf[2 + 16 + 1];
-        std::snprintf(buf, sizeof(buf), "0x%llx",
-                      static_cast<unsigned long long>(remaining));
-        out.emplace_back(buf);
+        std::string hex = "0x";
+        auto rem = static_cast<unsigned long long>(remaining);
+        char hex_chars[] = "0123456789abcdef";
+        char temp[16];
+        int idx = 0;
+        do {
+            temp[idx++] = hex_chars[rem % 16];
+            rem /= 16;
+        } while (rem > 0);
+        while (idx > 0) {
+            hex += temp[--idx];
+        }
+        out.emplace_back(std::move(hex));
     }
     return out;
 }

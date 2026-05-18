@@ -31,6 +31,17 @@
 namespace rflcpp::derive {
 
 template <class T>
+constexpr auto const& unwrap_val(const T& v) {
+    if constexpr (is_wrapped_v<T>) {
+        return unwrap_val(v.value);
+    } else if constexpr (requires { v.get(); }) {
+        return unwrap_val(v.get());
+    } else {
+        return v;
+    }
+}
+
+template <class T>
 constexpr bool equal(const T& a, const T& b) {
     if constexpr (std::equality_comparable<T>) {
         return a == b;
@@ -70,19 +81,21 @@ template <class T> constexpr std::size_t hash_one(const T& v);
 
 template <class T>
 constexpr std::size_t hash(const T& v) {
-    if constexpr (requires { std::hash<T>{}(v); }) {
-        return std::hash<T>{}(v);
-    } else if constexpr (enum_like<T>) {
-        using U = std::underlying_type_t<T>;
-        return std::hash<U>{}(static_cast<U>(v));
-    } else if constexpr (reflectable_class<T>) {
+    auto const& val = unwrap_val(v);
+    using U = std::remove_cvref_t<decltype(val)>;
+    if constexpr (requires { std::hash<U>{}(val); }) {
+        return std::hash<U>{}(val);
+    } else if constexpr (enum_like<U>) {
+        using UT = std::underlying_type_t<U>;
+        return std::hash<UT>{}(static_cast<UT>(val));
+    } else if constexpr (reflectable_class<U>) {
         std::size_t h = 0;
-        for_each_field(v, [&](std::string_view, auto const& fv) {
+        for_each_field(val, [&](std::string_view, auto const& fv) {
             h = detail::hash_combine(h, detail::hash_one(fv));
         });
         return h;
     } else {
-        static_assert(sizeof(T) == 0,
+        static_assert(sizeof(U) == 0,
             "rflcpp::derive::hash: type is neither std::hash-able nor a "
             "reflectable aggregate.");
     }
@@ -90,7 +103,7 @@ constexpr std::size_t hash(const T& v) {
 
 namespace detail {
 template <class T> constexpr std::size_t hash_one(const T& v) {
-    return rflcpp::derive::hash(v);
+    return rflcpp::derive::hash(unwrap_val(v));
 }
 } // namespace detail
 
@@ -100,18 +113,20 @@ namespace detail {
 
 template <class T>
 void format_one(std::ostream& os, const T& v) {
-    if constexpr (std::is_same_v<std::remove_cvref_t<T>, bool>) {
-        os << (v ? "true" : "false");
-    } else if constexpr (enum_like<T>) {
-        os << enum_name(v);
-    } else if constexpr (std::is_arithmetic_v<T>) {
-        os << v;
-    } else if constexpr (string_like<T>) {
-        os << '"' << std::string_view{v} << '"';
-    } else if constexpr (requires { os << v; }) {
-        os << v;
-    } else if constexpr (reflectable_class<T>) {
-        os << rflcpp::derive::format(v);
+    auto const& val = unwrap_val(v);
+    using U = std::remove_cvref_t<decltype(val)>;
+    if constexpr (std::is_same_v<U, bool>) {
+        os << (val ? "true" : "false");
+    } else if constexpr (enum_like<U>) {
+        os << enum_name(val);
+    } else if constexpr (std::is_arithmetic_v<U>) {
+        os << val;
+    } else if constexpr (string_like<U>) {
+        os << '"' << std::string_view{val} << '"';
+    } else if constexpr (requires { os << val; }) {
+        os << val;
+    } else if constexpr (reflectable_class<U>) {
+        os << rflcpp::derive::format(val);
     } else {
         os << "<unprintable>";
     }
@@ -121,11 +136,13 @@ void format_one(std::ostream& os, const T& v) {
 
 template <class T>
 std::string format(const T& v) {
+    auto const& val = unwrap_val(v);
+    using U = std::remove_cvref_t<decltype(val)>;
     std::ostringstream oss;
-    if constexpr (reflectable_class<T>) {
-        oss << type_name_of<T>() << '{';
+    if constexpr (reflectable_class<U>) {
+        oss << type_name_of<U>() << '{';
         bool first = true;
-        for_each_field(v, [&](std::string_view name, auto const& fv) {
+        for_each_field(val, [&](std::string_view name, auto const& fv) {
             if (!first) oss << ", ";
             first = false;
             oss << name << '=';
@@ -133,7 +150,7 @@ std::string format(const T& v) {
         });
         oss << '}';
     } else {
-        detail::format_one(oss, v);
+        detail::format_one(oss, val);
     }
     return oss.str();
 }

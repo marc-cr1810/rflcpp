@@ -32,10 +32,12 @@ bool from_string(std::string_view s, T& out) {
         auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), out);
         return ec == std::errc{};
     } else if constexpr (std::is_floating_point_v<T>) {
-        // Simple fallback as from_chars for float is not always available in all compilers
+        auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), out);
+        if (ec == std::errc{}) return true;
         try {
             if constexpr (std::is_same_v<T, float>) out = std::stof(std::string{s});
-            else out = std::stod(std::string{s});
+            else if constexpr (std::is_same_v<T, double>) out = std::stod(std::string{s});
+            else out = std::stold(std::string{s});
             return true;
         } catch (...) { return false; }
     }

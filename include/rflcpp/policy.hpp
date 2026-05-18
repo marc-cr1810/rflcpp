@@ -27,7 +27,7 @@ enum class access_mode {
 
 template <class T>
 struct access_policy {
-    static constexpr access_mode mode = access_mode::all;
+    static constexpr access_mode mode = access_mode::public_only;
 };
 
 template <class T>

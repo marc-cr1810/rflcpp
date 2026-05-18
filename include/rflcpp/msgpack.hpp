@@ -201,6 +201,25 @@ result<T> read_dispatch(mpack_node_t node) {
         return out;
     }
     else if constexpr (reflectable_class<U>) {
+        if (mpack_node_type(node) != mpack_type_map) {
+            return fail(error{error_kind::type_mismatch, "expected map"});
+        }
+        if constexpr (strict_policy<U>::strict) {
+            size_t count = mpack_node_map_count(node);
+            for (size_t i = 0; i < count; ++i) {
+                mpack_node_t key_node = mpack_node_map_key_at(node, i);
+                if (mpack_node_type(key_node) == mpack_type_str) {
+                    std::string k(mpack_node_str(key_node), mpack_node_strlen(key_node));
+                    if (!rflcpp::detail::serialization::is_valid_key<U>(k)) {
+                        return fail(error{error_kind::unknown_field, "unknown field '" + k + "'"});
+                    }
+                }
+            }
+        }
+        struct validation_guard {
+            validation_guard() { rflcpp::detail::g_bypass_validation = true; }
+            ~validation_guard() { rflcpp::detail::g_bypass_validation = false; }
+        } guard;
         U val;
         std::optional<error> failure;
         read_members(node, val, failure);
@@ -337,54 +356,47 @@ struct msgpack_codec<patch_type<T>> {
     }
 };
 
-template <class Registry, fixed_string_registry TagField>
+template <class Registry, fixed_string TagField>
 struct msgpack_codec<registered_any<Registry, TagField>> {
     static void write(mpack_writer_t* writer, const registered_any<Registry, TagField>& ra) {
         if (ra.value.empty()) {
             mpack_write_nil(writer);
             return;
         }
-        njson j = rflcpp::detail::json::write_dispatch(ra.value);
-        if (j.is_object()) {
-            j[std::string{TagField.view()}] = std::string{ra.value.type_name()};
-        }
         
-        auto convert = [&](const njson& j_val, auto& self) -> void {
-            if (j_val.is_null()) {
-                mpack_write_nil(writer);
-                return;
-            }
-            if (j_val.is_boolean()) {
-                mpack_write_bool(writer, j_val.get<bool>());
-                return;
-            }
-            if (j_val.is_number()) {
-                if (j_val.is_number_integer()) mpack_write_int(writer, j_val.get<int64_t>());
-                else mpack_write_double(writer, j_val.get<double>());
-                return;
-            }
-            if (j_val.is_string()) {
-                std::string s = j_val.get<std::string>();
-                mpack_write_str(writer, s.c_str(), (uint32_t)s.size());
-                return;
-            }
-            if (j_val.is_array()) {
-                mpack_start_array(writer, (uint32_t)j_val.size());
-                for (const auto& item : j_val) self(item, self);
-                mpack_finish_array(writer);
-                return;
-            }
-            if (j_val.is_object()) {
-                mpack_start_map(writer, (uint32_t)j_val.size());
-                for (auto it = j_val.begin(); it != j_val.end(); ++it) {
-                    mpack_write_str(writer, it.key().c_str(), (uint32_t)it.key().size());
-                    self(it.value(), self);
+        bool found = false;
+        using Tuple = typename Registry::types;
+        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            ([&] {
+                if (found) return;
+                using T = std::tuple_element_t<Is, Tuple>;
+                if (ra.value.type_id() == typeid(T)) {
+                    found = true;
+                    if (auto ptr = ra.value.template cast<T>()) {
+                        if constexpr (reflectable_class<T>) {
+                            uint32_t count = 0;
+                            for_each_field(*ptr, [&](auto, auto const& fr) { 
+                                if constexpr (!rflcpp::detail::serialization::skip_on_write_v<std::remove_cvref_t<decltype(fr)>>()) count++; 
+                            });
+                            mpack_start_map(writer, count + 1);
+                            mpack_write_str(writer, TagField.view().data(), (uint32_t)TagField.view().size());
+                            std::string tag{ra.value.type_name()};
+                            mpack_write_str(writer, tag.c_str(), (uint32_t)tag.size());
+                            rflcpp::detail::msgpack::write_members(writer, *ptr);
+                            mpack_finish_map(writer);
+                        } else {
+                            mpack_start_map(writer, 2);
+                            mpack_write_str(writer, TagField.view().data(), (uint32_t)TagField.view().size());
+                            std::string tag{ra.value.type_name()};
+                            mpack_write_str(writer, tag.c_str(), (uint32_t)tag.size());
+                            mpack_write_str(writer, "value", 5);
+                            rflcpp::detail::msgpack::write_dispatch(writer, *ptr);
+                            mpack_finish_map(writer);
+                        }
+                    }
                 }
-                mpack_finish_map(writer);
-                return;
-            }
-        };
-        convert(j, convert);
+            }(), ...);
+        }(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
     }
     
     static result<registered_any<Registry, TagField>> read(mpack_node_t node, std::string_view path = "$") {

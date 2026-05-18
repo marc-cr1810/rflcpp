@@ -350,9 +350,7 @@ result<T> read_dispatch(const YAML::Node& node, std::string_view path) {
     if constexpr (requires { yaml_codec<U>::read(node); }) {
         return yaml_codec<U>::read(node);
     }
-    else if constexpr (requires { typename U::value_type;
-                                  requires std::same_as<U,
-                                      validated<typename U::value_type>>; }) {
+    else if constexpr (is_validated_v<U>) {
         using V = typename U::value_type;
         auto inner = read_dispatch<V>(node, path);
         if (!inner) return fail(inner.error());
@@ -422,6 +420,18 @@ result<T> read_dispatch(const YAML::Node& node, std::string_view path) {
     }
     else if constexpr (reflectable_class<U>) {
         if (!node.IsMap()) return fail({error_kind::type_mismatch, "expected map", std::string{path}});
+        if constexpr (strict_policy<U>::strict) {
+            for (auto const& item : node) {
+                std::string k = item.first.as<std::string>();
+                if (!rflcpp::detail::serialization::is_valid_key<U>(k)) {
+                    return fail({error_kind::unknown_field, "unknown field '" + k + "'", std::string{path}});
+                }
+            }
+        }
+        struct validation_guard {
+            validation_guard() { rflcpp::detail::g_bypass_validation = true; }
+            ~validation_guard() { rflcpp::detail::g_bypass_validation = false; }
+        } guard;
         U val;
         std::optional<error> failure;
         read_members(node, val, path, failure);
@@ -523,35 +533,34 @@ struct yaml_codec<patch_type<T>> {
     }
 };
 
-template <class Registry, fixed_string_registry TagField>
+template <class Registry, fixed_string TagField>
 struct yaml_codec<registered_any<Registry, TagField>> {
     static YAML::Node write(const registered_any<Registry, TagField>& ra) {
         if (ra.value.empty()) return YAML::Node(YAML::NodeType::Null);
-        njson j = rflcpp::detail::json::write_dispatch(ra.value);
-        if (j.is_object()) {
-            j[std::string{TagField.view()}] = std::string{ra.value.type_name()};
-        }
         
-        auto convert = [](const njson& j_val, auto& self) -> YAML::Node {
-            if (j_val.is_null()) return YAML::Node(YAML::NodeType::Null);
-            if (j_val.is_boolean()) return YAML::Node(j_val.get<bool>());
-            if (j_val.is_number()) return YAML::Node(j_val.get<double>());
-            if (j_val.is_string()) return YAML::Node(j_val.get<std::string>());
-            if (j_val.is_array()) {
-                YAML::Node node;
-                for (const auto& item : j_val) node.push_back(self(item, self));
-                return node;
-            }
-            if (j_val.is_object()) {
-                YAML::Node node;
-                for (auto it = j_val.begin(); it != j_val.end(); ++it) {
-                    node[it.key()] = self(it.value(), self);
+        YAML::Node node;
+        bool found = false;
+        using Tuple = typename Registry::types;
+        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            ([&] {
+                if (found) return;
+                using T = std::tuple_element_t<Is, Tuple>;
+                if (ra.value.type_id() == typeid(T)) {
+                    found = true;
+                    if (auto ptr = ra.value.template cast<T>()) {
+                        YAML::Node inner = rflcpp::detail::yaml::write_dispatch(*ptr);
+                        if constexpr (reflectable_class<T>) {
+                            node = inner;
+                            node[std::string{TagField.view()}] = std::string{ra.value.type_name()};
+                        } else {
+                            node[std::string{TagField.view()}] = std::string{ra.value.type_name()};
+                            node["value"] = inner;
+                        }
+                    }
                 }
-                return node;
-            }
-            return YAML::Node(YAML::NodeType::Null);
-        };
-        return convert(j, convert);
+            }(), ...);
+        }(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+        return node;
     }
     
     static result<registered_any<Registry, TagField>> read(const YAML::Node& node, std::string_view path = "$") {

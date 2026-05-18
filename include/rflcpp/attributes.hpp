@@ -34,6 +34,19 @@ struct fixed_string {
     }
 
     constexpr auto operator<=>(const fixed_string&) const = default;
+
+    template <std::size_t M>
+    constexpr bool operator==(const fixed_string<M>& other) const noexcept {
+        return view() == other.view();
+    }
+
+    constexpr bool operator==(std::string_view sv) const noexcept {
+        return view() == sv;
+    }
+
+    friend constexpr bool operator==(std::string_view sv, const fixed_string& fs) noexcept {
+        return sv == fs.view();
+    }
 };
 
 template <std::size_t N>

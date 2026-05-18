@@ -8,33 +8,42 @@
 #include <typeindex>
 
 #include <rflcpp/reflect.hpp>
+
+#ifdef RFLCPP_ENABLE_JSON
 #include <nlohmann/json.hpp>
+#endif
 
 namespace rflcpp {
 
+#ifdef RFLCPP_ENABLE_JSON
 using njson = nlohmann::json;
 
 namespace detail::json {
 template <class T>
 njson write_dispatch(const T& v);
 }
+#endif
 
 namespace detail::any {
 
 struct vtable {
     std::string_view (*type_name)();
     std::type_index  (*type_id)();
+#ifdef RFLCPP_ENABLE_JSON
     njson            (*to_json)(const void* ptr);
+#endif
 };
 
 template <class T>
 const vtable* get_vtable() {
     static constexpr vtable vt = {
         .type_name = []() -> std::string_view { return type_name_of<T>(); },
-        .type_id   = []() -> std::type_index  { return typeid(T); },
-        .to_json   = [](const void* ptr) -> njson {
+        .type_id   = []() -> std::type_index  { return typeid(T); }
+#ifdef RFLCPP_ENABLE_JSON
+        , .to_json   = [](const void* ptr) -> njson {
             return rflcpp::detail::json::write_dispatch(*static_cast<const T*>(ptr));
         }
+#endif
     };
     return &vt;
 }
@@ -73,10 +82,12 @@ public:
         return nullptr;
     }
 
+#ifdef RFLCPP_ENABLE_JSON
     [[nodiscard]] njson to_json() const {
         if (vtable_) return vtable_->to_json(ptr_.get());
         return nullptr;
     }
+#endif
 
 private:
     std::shared_ptr<void> ptr_;

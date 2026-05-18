@@ -105,7 +105,7 @@ TEST_CASE("Dynamic invoke failure handling", "[invoke][failure]") {
     SECTION("Unknown method name") {
         auto res = rflcpp::invoke(calc, "multiply", std::vector<rflcpp::any>{2.0, 3.0});
         REQUIRE(!res.has_value());
-        REQUIRE(res.error().kind() == rflcpp::error_kind::unknown_field);
+        REQUIRE(res.error().kind() == rflcpp::error_kind::method_not_found);
     }
 
     SECTION("Argument count mismatch") {
@@ -126,6 +126,6 @@ TEST_CASE("Dynamic invoke failure handling", "[invoke][failure]") {
         Dummy dummy;
         auto res = rflcpp::invoke(dummy, "reset", std::vector<rflcpp::any>{});
         REQUIRE(!res.has_value());
-        REQUIRE(res.error().kind() == rflcpp::error_kind::unknown_field);
+        REQUIRE(res.error().kind() == rflcpp::error_kind::method_not_found);
     }
 }

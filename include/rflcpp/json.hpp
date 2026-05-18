@@ -364,9 +364,7 @@ result<T> read_dispatch(const njson& j, std::string_view path) {
     if constexpr (requires { json_codec<U>::read(j, path); }) {
         return json_codec<U>::read(j, path);
     }
-    else if constexpr (requires { typename U::value_type;
-                                  requires std::same_as<U,
-                                      validated<typename U::value_type>>; }) {
+    else if constexpr (is_validated_v<U>) {
         using V = typename U::value_type;
         auto inner = read_dispatch<V>(j, path);
         if (!inner) return fail(inner.error());
@@ -448,6 +446,17 @@ result<T> read_dispatch(const njson& j, std::string_view path) {
     }
     else if constexpr (reflectable_class<U>) {
         if (j.is_object()) {
+            if constexpr (strict_policy<U>::strict) {
+                for (auto it = j.begin(); it != j.end(); ++it) {
+                    if (!rflcpp::detail::serialization::is_valid_key<U>(it.key())) {
+                        return fail({error_kind::unknown_field, "unknown field '" + it.key() + "'", std::string{path}});
+                    }
+                }
+            }
+            struct validation_guard {
+                validation_guard() { rflcpp::detail::g_bypass_validation = true; }
+                ~validation_guard() { rflcpp::detail::g_bypass_validation = false; }
+            } guard;
             U val;
             std::optional<error> failure;
             read_members(j, val, path, failure);
@@ -561,11 +570,27 @@ struct json_codec<patch_type<T>> {
     }
 };
 
-template <class Registry, fixed_string_registry TagField>
+template <class Registry, fixed_string TagField>
 struct json_codec<registered_any<Registry, TagField>> {
     static njson write(const registered_any<Registry, TagField>& ra) {
         if (ra.value.empty()) return nullptr;
-        njson j = ra.value.to_json();
+        
+        njson j = nullptr;
+        bool found = false;
+        using Tuple = typename Registry::types;
+        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            ([&] {
+                if (found) return;
+                using T = std::tuple_element_t<Is, Tuple>;
+                if (ra.value.type_id() == typeid(T)) {
+                    found = true;
+                    if (auto ptr = ra.value.template cast<T>()) {
+                        j = rflcpp::detail::json::write_dispatch(*ptr);
+                    }
+                }
+            }(), ...);
+        }(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+        
         if (j.is_object()) {
             j[std::string{TagField.view()}] = std::string{ra.value.type_name()};
         }

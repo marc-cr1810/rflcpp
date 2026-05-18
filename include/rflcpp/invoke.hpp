@@ -56,12 +56,57 @@ rflcpp::result<T> coerce_arg(const rflcpp::any& arg, std::string_view method_nam
 
     // 1. Direct type match (fast path)
     if (arg.type_id() == typeid(T)) {
-        if (auto* ptr = const_cast<rflcpp::any&>(arg).cast<T>()) {
+        if (auto* ptr = arg.cast<T>()) {
             return *ptr;
         }
     }
 
-    // 2. Try JSON round-trip coercion (supports numeric conversions, string-to-enum, structs, etc.!)
+    // 2. Format-agnostic arithmetic coercion
+    if constexpr (std::is_arithmetic_v<T>) {
+        #define TRY_CAST(SrcT) \
+            if (arg.type_id() == typeid(SrcT)) { \
+                if (auto* ptr = arg.cast<SrcT>()) { \
+                    return static_cast<T>(*ptr); \
+                } \
+            }
+        TRY_CAST(bool)
+        TRY_CAST(char)
+        TRY_CAST(signed char)
+        TRY_CAST(unsigned char)
+        TRY_CAST(short)
+        TRY_CAST(unsigned short)
+        TRY_CAST(int)
+        TRY_CAST(unsigned int)
+        TRY_CAST(long)
+        TRY_CAST(unsigned long)
+        TRY_CAST(long long)
+        TRY_CAST(unsigned long long)
+        TRY_CAST(float)
+        TRY_CAST(double)
+        TRY_CAST(long double)
+        #undef TRY_CAST
+    }
+
+    // 3. Format-agnostic string-to-enum coercion
+    if constexpr (enum_like<T>) {
+        if (arg.type_id() == typeid(std::string)) {
+            if (auto* ptr = arg.cast<std::string>()) {
+                if (auto enum_val = rflcpp::enum_value<T>(*ptr)) {
+                    return *enum_val;
+                }
+            }
+        }
+        if (arg.type_id() == typeid(std::string_view)) {
+            if (auto* ptr = arg.cast<std::string_view>()) {
+                if (auto enum_val = rflcpp::enum_value<T>(*ptr)) {
+                    return *enum_val;
+                }
+            }
+        }
+    }
+
+    // 4. JSON fallback (if enabled)
+#ifdef RFLCPP_ENABLE_JSON
     try {
         auto js_str = arg.to_json().dump();
         auto res = rflcpp::from_json<T>(js_str);
@@ -69,6 +114,7 @@ rflcpp::result<T> coerce_arg(const rflcpp::any& arg, std::string_view method_nam
             return std::move(*res);
         }
     } catch (...) {}
+#endif
 
     return rflcpp::fail(error(error_kind::type_mismatch,
         "Failed to convert argument to expected type",
@@ -166,7 +212,7 @@ bool match_and_call(T& obj, std::string_view method_name, const std::vector<rflc
 
 template <class T, std::size_t N, std::size_t... Is>
 rflcpp::result<rflcpp::any> invoke_helper(T& obj, std::string_view method_name, const std::vector<rflcpp::any>& args, std::index_sequence<Is...>) {
-    rflcpp::result<rflcpp::any> ret = rflcpp::fail(error(error_kind::unknown_field,
+    rflcpp::result<rflcpp::any> ret = rflcpp::fail(error(error_kind::method_not_found,
         "Method '" + std::string(method_name) + "' not found on type '" + std::string(type_name_of<T>()) + "'."));
 
     (match_and_call<T, N, Is>(obj, method_name, args, ret) || ...);
@@ -180,7 +226,7 @@ template <class T>
 rflcpp::result<rflcpp::any> invoke(T& obj, std::string_view method_name, const std::vector<rflcpp::any>& args) {
     constexpr auto N = detail::invoke::count_methods<T>();
     if constexpr (N == 0) {
-        return rflcpp::fail(error(error_kind::unknown_field,
+        return rflcpp::fail(error(error_kind::method_not_found,
             "No invocable member functions found on type '" + std::string(type_name_of<T>()) + "'."));
     } else {
         return detail::invoke::invoke_helper<T, N>(obj, method_name, args, std::make_index_sequence<N>{});

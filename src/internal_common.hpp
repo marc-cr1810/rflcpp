@@ -3,11 +3,12 @@
 #pragma once
 
 #include <string_view>
+#include <rflcpp/error.hpp>
 
 namespace rflcpp::detail {
 
 [[nodiscard]] std::string_view library_version() noexcept;
 
-[[nodiscard]] std::string_view error_kind_tag(int kind_int) noexcept;
+[[nodiscard]] std::string_view error_kind_tag(error_kind kind) noexcept;
 
 } // namespace rflcpp::detail

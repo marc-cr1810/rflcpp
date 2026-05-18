@@ -12,12 +12,32 @@
 #include <rflcpp/derive.hpp>
 #include <rflcpp/enum_meta.hpp>
 #include <rflcpp/error.hpp>
-#include <rflcpp/json.hpp>
 #include <rflcpp/policy.hpp>
 #include <rflcpp/reflect.hpp>
 #include <rflcpp/result.hpp>
-#include <rflcpp/schema.hpp>
 #include <rflcpp/validation.hpp>
+
+#ifdef RFLCPP_ENABLE_JSON
+#include <rflcpp/json.hpp>
+#include <rflcpp/schema.hpp>
+#endif
+
+#ifdef RFLCPP_ENABLE_XML
+#include <rflcpp/xml.hpp>
+#endif
+
+#ifdef RFLCPP_ENABLE_YAML
+#include <rflcpp/yaml.hpp>
+#endif
+
+#ifdef RFLCPP_ENABLE_TOML
+#include <rflcpp/toml.hpp>
+#endif
+
+#ifdef RFLCPP_ENABLE_MSGPACK
+#include <rflcpp/msgpack.hpp>
+#endif
+
 #include <rflcpp/invoke.hpp>
 
 namespace rflcpp {}

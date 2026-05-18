@@ -135,4 +135,62 @@ constexpr auto default_v() {
     }(static_cast<attrs_tuple*>(nullptr));
 }
 
+template <class U>
+constexpr bool is_valid_key(std::string_view key) {
+    if constexpr (!reflectable_class<U>) {
+        return false;
+    } else {
+        bool found = false;
+        
+        // 1. Check all base classes
+        if constexpr (base_count_of<U>() > 0 &&
+                      base_policy<U>::mode != base_mode::skip) {
+            constexpr auto B_COUNT = base_count_of<U>();
+            [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                ([&] {
+                    if (found) return;
+                    constexpr auto base = std::meta::bases_of(^^U, rflcpp::detail::rfl_ctx_for<U>())[Is];
+                    using B = typename [: std::meta::type_of(base) :];
+                    if constexpr (base_policy<U>::mode == base_mode::flatten) {
+                        if (is_valid_key<B>(key)) found = true;
+                    } else if constexpr (base_policy<U>::mode == base_mode::nested) {
+                        if (key == rflcpp::type_name_of<B>()) found = true;
+                    }
+                }(), ...);
+            }(std::make_index_sequence<B_COUNT>{});
+        }
+        
+        if (found) return true;
+        
+        // 2. Check all fields of U
+        template_for_each_field<U>([&]<class FT>(std::string_view member_name) {
+            if (found) return;
+            using F = std::remove_cvref_t<FT>;
+            if constexpr (skip_on_read_v<F>()) return;
+            
+            if constexpr (flatten_v<F>()) {
+                using InnerT = std::remove_cvref_t<typename F::value_type>;
+                if (is_valid_key<InnerT>(key)) found = true;
+            } else {
+                std::string canonical = effective_key<U, F>(member_name);
+                if (canonical == key) {
+                    found = true;
+                    return;
+                }
+                
+                // Check aliases
+                constexpr auto ap = aliases_pair<F>();
+                for (std::size_t i = 0; i < ap.second; ++i) {
+                    if (ap.first[i] == key) {
+                        found = true;
+                        return;
+                    }
+                }
+            }
+        });
+        
+        return found;
+    }
+}
+
 } // namespace rflcpp::detail::serialization

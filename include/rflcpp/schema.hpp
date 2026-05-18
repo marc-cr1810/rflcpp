@@ -14,6 +14,7 @@
 #include <rflcpp/policy.hpp>
 #include <rflcpp/reflect.hpp>
 #include <rflcpp/validation.hpp>
+#include <rflcpp/detail/serialization_common.hpp>
 
 namespace rflcpp {
 
@@ -119,19 +120,7 @@ void emit_schema_for_type(std::ostringstream& os) {
             if (!first) os << ',';
             first = false;
 
-            std::string key{name};
-            if constexpr (is_field_v<FT>) {
-                key = std::string{FT::name()};
-            } else if constexpr (is_attr_v<FT>) {
-                using attrs_tuple = typename FT::attributes;
-                constexpr auto rn = []<class... A>(std::tuple<A...>*) consteval {
-                    return rflcpp::detail::rename_of<A...>();
-                }(static_cast<attrs_tuple*>(nullptr));
-                key = !rn.empty() ? std::string{rn}
-                                  : naming_policy<U>::transform(name);
-            } else {
-                key = naming_policy<U>::transform(name);
-            }
+            std::string key = rflcpp::detail::serialization::effective_key<U, FT>(name);
 
             emit_string(os, key);
             os << ':';

@@ -361,9 +361,7 @@ result<T> read_dispatch(const pugi::xml_node& node, std::string_view path) {
     if constexpr (requires { xml_codec<U>::read(node); }) {
         return xml_codec<U>::read(node);
     }
-    else if constexpr (requires { typename U::value_type;
-                                  requires std::same_as<U,
-                                      validated<typename U::value_type>>; }) {
+    else if constexpr (is_validated_v<U>) {
         using V = typename U::value_type;
         auto inner = read_dispatch<V>(node, path);
         if (!inner) return fail(inner.error());
@@ -429,6 +427,18 @@ result<T> read_dispatch(const pugi::xml_node& node, std::string_view path) {
         return out;
     }
     else if constexpr (reflectable_class<U>) {
+        if constexpr (strict_policy<U>::strict) {
+            for (pugi::xml_node child = node.first_child(); child; child = child.next_sibling()) {
+                std::string k = child.name();
+                if (!rflcpp::detail::serialization::is_valid_key<U>(k)) {
+                    return fail({error_kind::unknown_field, "unknown field '" + k + "'", std::string{path}});
+                }
+            }
+        }
+        struct validation_guard {
+            validation_guard() { rflcpp::detail::g_bypass_validation = true; }
+            ~validation_guard() { rflcpp::detail::g_bypass_validation = false; }
+        } guard;
         U val;
         std::optional<error> failure;
         read_members(node, val, path, failure);
@@ -555,51 +565,31 @@ struct xml_codec<patch_type<T>> {
     }
 };
 
-template <class Registry, fixed_string_registry TagField>
+template <class Registry, fixed_string TagField>
 struct xml_codec<registered_any<Registry, TagField>> {
     static void write(pugi::xml_node& node, const registered_any<Registry, TagField>& ra, std::string_view name) {
         if (ra.value.empty()) return;
-        njson j = rflcpp::detail::json::write_dispatch(ra.value);
-        if (j.is_object()) {
-            j[std::string{TagField.view()}] = std::string{ra.value.type_name()};
-        }
         
-        auto convert = [&](const njson& j_val, pugi::xml_node& parent, std::string_view el_name, auto& self) -> void {
-            if (j_val.is_null()) {
-                pugi::xml_node c = parent.append_child(std::string{el_name}.c_str());
-                c.append_attribute("null").set_value("true");
-                return;
-            }
-            if (j_val.is_boolean()) {
-                pugi::xml_node c = parent.append_child(std::string{el_name}.c_str());
-                c.text().set(j_val.get<bool>() ? "true" : "false");
-                return;
-            }
-            if (j_val.is_number()) {
-                pugi::xml_node c = parent.append_child(std::string{el_name}.c_str());
-                if (j_val.is_number_integer()) c.text().set(j_val.get<int64_t>());
-                else c.text().set(j_val.get<double>());
-                return;
-            }
-            if (j_val.is_string()) {
-                pugi::xml_node c = parent.append_child(std::string{el_name}.c_str());
-                c.text().set(j_val.get<std::string>().c_str());
-                return;
-            }
-            if (j_val.is_array()) {
-                pugi::xml_node arr_node = parent.append_child(std::string{el_name}.c_str());
-                for (const auto& item : j_val) self(item, arr_node, "item", self);
-                return;
-            }
-            if (j_val.is_object()) {
-                pugi::xml_node obj_node = parent.append_child(std::string{el_name}.c_str());
-                for (auto it = j_val.begin(); it != j_val.end(); ++it) {
-                    self(it.value(), obj_node, it.key(), self);
+        bool found = false;
+        using Tuple = typename Registry::types;
+        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            ([&] {
+                if (found) return;
+                using T = std::tuple_element_t<Is, Tuple>;
+                if (ra.value.type_id() == typeid(T)) {
+                    found = true;
+                    if (auto ptr = ra.value.template cast<T>()) {
+                        pugi::xml_node child = node.append_child(std::string{name}.c_str());
+                        child.append_child(std::string{TagField.view()}.c_str()).text().set(std::string{ra.value.type_name()}.c_str());
+                        if constexpr (reflectable_class<T>) {
+                            rflcpp::detail::xml::write_members(child, *ptr);
+                        } else {
+                            rflcpp::detail::xml::write_dispatch(child, *ptr, "value");
+                        }
+                    }
                 }
-                return;
-            }
-        };
-        convert(j, node, name, convert);
+            }(), ...);
+        }(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
     }
     
     static result<registered_any<Registry, TagField>> read(const pugi::xml_node& node, std::string_view path = "$") {

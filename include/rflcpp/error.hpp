@@ -15,6 +15,7 @@ enum class error_kind {
     type_mismatch,
     missing_field,
     unknown_field,
+    method_not_found,
     validation_failed,
     out_of_range,
     user_defined,

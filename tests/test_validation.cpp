@@ -48,3 +48,9 @@ TEST_CASE("validated throwing constructor throws rflcpp_error on failure",
     REQUIRE_THROWS_AS(Percent{1000},      rflcpp::rflcpp_error);
     REQUIRE_NOTHROW (Percent{42});
 }
+
+TEST_CASE("validated default constructor validates default value",
+          "[validation][default]") {
+    REQUIRE_THROWS_AS(NonEmpty{}, rflcpp::rflcpp_error);
+    REQUIRE_NOTHROW(Percent{});
+}

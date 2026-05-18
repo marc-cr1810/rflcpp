@@ -86,16 +86,26 @@ struct non_empty {
 
 } // namespace rules
 
+namespace detail {
+inline thread_local bool g_bypass_validation = false;
+}
+
 template <class T, class... Rules>
 class validated {
     static_assert((validation_rule<Rules, T> && ...),
                   "All Rules must satisfy validation_rule<R, T>.");
 public:
-    validated() = default;
+    validated() : value_() {
+        if (!detail::g_bypass_validation) {
+            if (auto e = check_all(value_)) throw rflcpp_error(std::move(*e));
+        }
+    }
     using value_type = T;
 
     explicit validated(T v) : value_(std::move(v)) {
-        if (auto e = check_all(value_)) throw rflcpp_error(std::move(*e));
+        if (!detail::g_bypass_validation) {
+            if (auto e = check_all(value_)) throw rflcpp_error(std::move(*e));
+        }
     }
 
     static result<validated> make(T v) {
@@ -114,7 +124,12 @@ private:
 
     static std::optional<error> check_all(const T& v) {
         std::optional<error> err;
-        (..., (err || run_rule<Rules>(v, err)));
+        [&]<class... R>(std::tuple<R...>*) {
+            ([&] {
+                if (err) return;
+                run_rule<R>(v, err);
+            }(), ...);
+        }(static_cast<std::tuple<Rules...>*>(nullptr));
         return err;
     }
 

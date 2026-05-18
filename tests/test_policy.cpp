@@ -45,6 +45,11 @@ struct rflcpp::access_policy<private_holder> {
     static constexpr auto mode = access_mode::public_only;
 };
 
+template <>
+struct rflcpp::strict_policy<strict_user> {
+    static constexpr bool strict = true;
+};
+
 TEST_CASE("naming_policy::camel_case rewrites member names",
           "[policy][naming]") {
     camel_user u{"Ada", "Lovelace", 36};
@@ -89,4 +94,10 @@ TEST_CASE("Base classes are flattened by default", "[policy][base]") {
     REQUIRE(back.has_value());
     REQUIRE(back->created == 7);
     REQUIRE(back->name    == "Ada");
+}
+
+TEST_CASE("strict_policy rejects unknown keys", "[policy][strict]") {
+    auto res = rflcpp::from_json<strict_user>(R"({"name":"Alice","age":30})");
+    REQUIRE(!res.has_value());
+    REQUIRE(res.error().kind() == rflcpp::error_kind::unknown_field);
 }

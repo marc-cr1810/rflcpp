@@ -9,12 +9,14 @@
 #include <optional>
 #include <utility>
 #include <algorithm>
+#include <tuple>
 
 #include <rflcpp/any.hpp>
 #include <rflcpp/reflect.hpp>
 #include <rflcpp/concepts.hpp>
 #include <rflcpp/error.hpp>
 #include <rflcpp/result.hpp>
+#include <rflcpp/attributes.hpp>
 
 // Forward declarations of JSON type if needed for type alias.
 #ifdef RFLCPP_ENABLE_JSON
@@ -28,6 +30,7 @@ namespace rflcpp {
 
 template <class... Types>
 struct type_registry {
+    using types = std::tuple<Types...>;
     
 #ifdef RFLCPP_ENABLE_JSON
     template <class JsonType = njson>
@@ -55,19 +58,7 @@ struct type_registry {
 #endif
 };
 
-// Compile-time string NTTP helper for TagField
-template <std::size_t N>
-struct fixed_string_registry {
-    char data[N]{};
-    consteval fixed_string_registry(const char (&s)[N]) {
-        std::copy_n(s, N, data);
-    }
-    [[nodiscard]] constexpr std::string_view view() const noexcept {
-        return {data, N > 0 ? N - 1 : 0};
-    }
-};
-
-template <class Registry, fixed_string_registry TagField = "type">
+template <class Registry, fixed_string TagField = "type">
 struct registered_any {
     rflcpp::any value;
     

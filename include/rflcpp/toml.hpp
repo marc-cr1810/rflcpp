@@ -381,9 +381,7 @@ result<T> read_dispatch(const ::toml::node& node, std::string_view path) {
     if constexpr (requires { toml_codec<U>::read(node, path); }) {
         return toml_codec<U>::read(node, path);
     }
-    else if constexpr (requires { typename U::value_type;
-                                  requires std::same_as<U,
-                                      validated<typename U::value_type>>; }) {
+    else if constexpr (is_validated_v<U>) {
         using V = typename U::value_type;
         auto inner = read_dispatch<V>(node, path);
         if (!inner) return fail(inner.error());
@@ -456,6 +454,18 @@ result<T> read_dispatch(const ::toml::node& node, std::string_view path) {
     }
     else if constexpr (reflectable_class<U>) {
         if (auto tbl = node.as_table()) {
+            if constexpr (strict_policy<U>::strict) {
+                for (auto const& [k, val] : *tbl) {
+                    std::string key_str{k.str()};
+                    if (!rflcpp::detail::serialization::is_valid_key<U>(key_str)) {
+                        return fail({error_kind::unknown_field, "unknown field '" + key_str + "'", std::string{path}});
+                    }
+                }
+            }
+            struct validation_guard {
+                validation_guard() { rflcpp::detail::g_bypass_validation = true; }
+                ~validation_guard() { rflcpp::detail::g_bypass_validation = false; }
+            } guard;
             U val;
             std::optional<error> failure;
             read_members(*tbl, val, path, failure);
@@ -582,42 +592,40 @@ struct toml_codec<patch_type<T>> {
     }
 };
 
-template <class Registry, fixed_string_registry TagField>
+template <class Registry, fixed_string TagField>
 struct toml_codec<registered_any<Registry, TagField>> {
     static std::unique_ptr<::toml::node> write(const registered_any<Registry, TagField>& ra) {
         if (ra.value.empty()) return nullptr;
-        njson j = rflcpp::detail::json::write_dispatch(ra.value);
-        if (j.is_object()) {
-            j[std::string{TagField.view()}] = std::string{ra.value.type_name()};
-        }
         
-        auto convert = [](const njson& j_val, auto& self) -> std::unique_ptr<::toml::node> {
-            if (j_val.is_null()) return nullptr;
-            if (j_val.is_boolean()) return std::make_unique<::toml::value<bool>>(j_val.get<bool>());
-            if (j_val.is_number()) {
-                if (j_val.is_number_integer()) return std::make_unique<::toml::value<int64_t>>(j_val.get<int64_t>());
-                return std::make_unique<::toml::value<double>>(j_val.get<double>());
-            }
-            if (j_val.is_string()) return std::make_unique<::toml::value<std::string>>(j_val.get<std::string>());
-            if (j_val.is_array()) {
-                auto arr = std::make_unique<::toml::array>();
-                for (const auto& item : j_val) {
-                    auto node = self(item, self);
-                    if (node) arr->push_back(std::move(*node));
+        std::unique_ptr<::toml::node> node = nullptr;
+        bool found = false;
+        using Tuple = typename Registry::types;
+        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            ([&] {
+                if (found) return;
+                using T = std::tuple_element_t<Is, Tuple>;
+                if (ra.value.type_id() == typeid(T)) {
+                    found = true;
+                    if (auto ptr = ra.value.template cast<T>()) {
+                        auto inner = rflcpp::detail::toml::write_dispatch(*ptr);
+                        if (inner) {
+                            if constexpr (reflectable_class<T>) {
+                                if (auto tbl = inner->as_table()) {
+                                    tbl->insert(std::string{TagField.view()}, std::string{ra.value.type_name()});
+                                    node = std::move(inner);
+                                }
+                            } else {
+                                auto tbl = std::make_unique<::toml::table>();
+                                tbl->insert(std::string{TagField.view()}, std::string{ra.value.type_name()});
+                                tbl->insert("value", std::move(*inner));
+                                node = std::move(tbl);
+                            }
+                        }
+                    }
                 }
-                return arr;
-            }
-            if (j_val.is_object()) {
-                auto tbl = std::make_unique<::toml::table>();
-                for (auto it = j_val.begin(); it != j_val.end(); ++it) {
-                    auto node = self(it.value(), self);
-                    if (node) tbl->insert(it.key(), std::move(*node));
-                }
-                return tbl;
-            }
-            return nullptr;
-        };
-        return convert(j, convert);
+            }(), ...);
+        }(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+        return node;
     }
     
     static result<registered_any<Registry, TagField>> read(const ::toml::node& node, std::string_view path = "$") {

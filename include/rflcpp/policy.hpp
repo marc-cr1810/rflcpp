@@ -308,7 +308,7 @@ private:
 public:
     static constexpr case_style style = Match::style;
 
-    static std::string transform(std::string_view member_name) {
+    static constexpr std::string transform(std::string_view member_name) {
         return detail::apply_case(member_name, style);
     }
 };

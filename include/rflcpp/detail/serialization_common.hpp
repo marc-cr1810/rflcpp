@@ -18,7 +18,7 @@
 namespace rflcpp::detail::serialization {
 
 template <class Owner, class AttrType>
-std::string resolve_attr_name(std::string_view member_name) {
+constexpr std::string resolve_attr_name(std::string_view member_name) {
     using attrs_tuple = typename AttrType::attributes;
     constexpr auto rn = [&]<class... A>(std::tuple<A...>*) consteval {
         return rflcpp::detail::rename_of<A...>();
@@ -29,7 +29,7 @@ std::string resolve_attr_name(std::string_view member_name) {
 }
 
 template <class Owner, class FieldType>
-inline std::string effective_key(std::string_view member_name) {
+constexpr std::string effective_key(std::string_view member_name) {
     if constexpr (is_field_v<FieldType>) {
         return std::string{FieldType::name()};
     } else if constexpr (is_attr_v<FieldType>) {

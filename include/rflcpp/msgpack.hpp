@@ -17,6 +17,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <fstream>
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -431,6 +432,31 @@ rflcpp::result<rflcpp::any> type_registry<Types...>::deserialize_msgpack(std::st
     }(), ...);
     return out;
 }
+
+namespace msgpack {
+
+template <class T>
+[[nodiscard]] result<T> load(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open()) {
+        return fail(error{error_kind::parse_error, "failed to open file: " + path});
+    }
+    std::vector<uint8_t> str((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    return from_msgpack<T>(str);
+}
+
+template <class T>
+[[nodiscard]] result<void> save(const std::string& path, const T& value) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f.is_open()) {
+        return fail(error{error_kind::parse_error, "failed to open file for writing: " + path});
+    }
+    auto bytes = to_msgpack(value);
+    f.write((const char*)bytes.data(), bytes.size());
+    return {};
+}
+
+} // namespace msgpack
 
 } // namespace rflcpp
 

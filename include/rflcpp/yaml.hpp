@@ -13,6 +13,7 @@
 #include <rflcpp/patch.hpp>
 #include <rflcpp/registry.hpp>
 
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -592,6 +593,30 @@ rflcpp::result<rflcpp::any> type_registry<Types...>::deserialize_yaml(std::strin
     }(), ...);
     return out;
 }
+
+namespace yaml {
+
+template <class T>
+[[nodiscard]] result<T> load(const std::string& path) {
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        return fail(error{error_kind::parse_error, "failed to open file: " + path});
+    }
+    std::string str((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    return from_yaml<T>(str);
+}
+
+template <class T>
+[[nodiscard]] result<void> save(const std::string& path, const T& value, yaml_options opts = {}) {
+    std::ofstream f(path);
+    if (!f.is_open()) {
+        return fail(error{error_kind::parse_error, "failed to open file for writing: " + path});
+    }
+    f << to_yaml(value, opts);
+    return {};
+}
+
+} // namespace yaml
 
 } // namespace rflcpp
 

@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -658,6 +659,30 @@ rflcpp::result<rflcpp::any> type_registry<Types...>::deserialize_toml(std::strin
     }(), ...);
     return out;
 }
+
+namespace toml {
+
+template <class T>
+[[nodiscard]] result<T> load(const std::string& path) {
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        return fail(error{error_kind::parse_error, "failed to open file: " + path});
+    }
+    std::string str((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    return from_toml<T>(str);
+}
+
+template <class T>
+[[nodiscard]] result<void> save(const std::string& path, const T& value, toml_options opts = {}) {
+    std::ofstream f(path);
+    if (!f.is_open()) {
+        return fail(error{error_kind::parse_error, "failed to open file for writing: " + path});
+    }
+    f << to_toml(value, opts);
+    return {};
+}
+
+} // namespace toml
 
 } // namespace rflcpp
 

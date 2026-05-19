@@ -36,3 +36,22 @@ TEST_CASE("Reflected any in a vector", "[any][vector]") {
     REQUIRE(vec[1].type_name() == "int");
     REQUIRE(vec[2].type_name() == "string");
 }
+
+TEST_CASE("Reflected any with smart pointers", "[any][smart_pointer]") {
+    auto p1 = std::make_shared<Shape>(Shape{789});
+    any a1 = p1;
+    REQUIRE(a1.type_name() == "Shape");
+    
+    auto s1 = a1.cast<Shape>();
+    REQUIRE(s1 != nullptr);
+    REQUIRE(s1->id == 789);
+    
+    auto p2 = std::make_unique<Shape>(Shape{999});
+    any a2 = std::move(p2);
+    REQUIRE(a2.type_name() == "Shape");
+    
+    auto s2 = a2.cast<Shape>();
+    REQUIRE(s2 != nullptr);
+    REQUIRE(s2->id == 999);
+}
+

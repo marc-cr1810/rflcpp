@@ -158,28 +158,61 @@ struct is_naming_tag {
     static constexpr bool value = requires { { T::style } -> std::convertible_to<case_style>; };
 };
 
-template <class Tuple, template <class> class Predicate, class Default, size_t Index, bool OutOfBounds>
-struct find_policy_helper {
-    using current = std::tuple_element_t<Index, Tuple>;
-    using type = std::conditional_t<
-        Predicate<current>::value,
-        current,
-        typename find_policy_helper<Tuple, Predicate, Default, Index + 1, (Index + 1 >= std::tuple_size_v<Tuple>)>::type
-    >;
+template <class T>
+struct type_holder {
+    using type = T;
 };
 
-template <class Tuple, template <class> class Predicate, class Default, size_t Index>
-struct find_policy_helper<Tuple, Predicate, Default, Index, true> {
-    using type = Default;
+template <class F>
+struct chain_node {
+    F f;
+};
+
+template <class F, class G>
+consteval auto operator+(chain_node<F> lhs, chain_node<G> rhs) {
+    return chain_node{[f = lhs.f, g = rhs.f]() {
+        auto res_f = f();
+        using FT = typename decltype(res_f)::type;
+        if constexpr (!std::is_same_v<FT, void>) {
+            return res_f;
+        } else {
+            return g();
+        }
+    }};
+}
+
+template <class Tuple, template <class> class Predicate, class Default>
+struct find_policy;
+
+template <class... Ps, template <class> class Predicate, class Default>
+struct find_policy<std::tuple<Ps...>, Predicate, Default> {
+    consteval static auto get() {
+        if constexpr (sizeof...(Ps) == 0) {
+            return type_holder<Default>{};
+        } else {
+            auto make_node = []<class P>() {
+                return chain_node{[]() {
+                    if constexpr (Predicate<P>::value) {
+                        return type_holder<P>{};
+                    } else {
+                        return type_holder<void>{};
+                    }
+                }};
+            };
+            
+            auto folded = (make_node.template operator()<Ps>() + ... + chain_node{[]() {
+                return type_holder<Default>{};
+            }});
+            
+            return folded.f();
+        }
+    }
+
+    using type = typename decltype(get())::type;
 };
 
 template <class Tuple, template <class> class Predicate, class Default>
-struct find_policy {
-    using type = typename find_policy_helper<Tuple, Predicate, Default, 0, (std::tuple_size_v<Tuple> == 0)>::type;
-};
-
-template <class Tuple, template <class> class Predicate, class Default>
-using find_policy_t = typename find_policy<Tuple, Predicate, Default>::type;
+using find_policy_t = typename find_policy<std::remove_cvref_t<Tuple>, Predicate, Default>::type;
 
 } // namespace detail
 

@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.28)
 project(rflcpp
     VERSION      0.1.0
     DESCRIPTION  "A modern C++26 reflection-based serialization library"
-    HOMEPAGE_URL "https://github.com/your-org/rflcpp"
+    HOMEPAGE_URL "https://github.com/marc-cr1810/rflcpp"
     LANGUAGES    CXX C
 )
 

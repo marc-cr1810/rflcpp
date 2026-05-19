@@ -41,9 +41,14 @@ consteval auto rfl_ctx_for() noexcept {
 } // namespace detail
 
 template <reflectable_class T>
+consteval auto members_of() {
+    using U = std::remove_cvref_t<T>;
+    return std::meta::nonstatic_data_members_of(^^U, detail::rfl_ctx_for<U>());
+}
+
+template <reflectable_class T>
 consteval std::size_t field_count_of() {
-    return std::meta::nonstatic_data_members_of(
-        ^^T, detail::rfl_ctx_for<T>()).size();
+    return members_of<T>().size();
 }
 
 template <reflectable_class T>
@@ -57,7 +62,7 @@ consteval auto field_names_of() {
     constexpr auto N = field_count_of<U>();
     return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
         return std::array<std::string_view, N>{
-            std::meta::identifier_of(std::meta::nonstatic_data_members_of(^^U, detail::rfl_ctx_for<U>())[Is])...
+            std::meta::identifier_of(members_of<U>()[Is])...
         };
     }(std::make_index_sequence<N>{});
 }
@@ -71,8 +76,8 @@ constexpr void for_each_field(T&& obj, F&& fn) {
     using U = std::remove_cvref_t<T>;
     constexpr auto N = field_count_of<U>();
     [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-        (fn(std::string_view{std::meta::identifier_of(std::meta::nonstatic_data_members_of(^^U, detail::rfl_ctx_for<U>())[Is])},
-            obj.[: std::meta::nonstatic_data_members_of(^^U, detail::rfl_ctx_for<U>())[Is] :]), ...);
+        (fn(std::string_view{std::meta::identifier_of(members_of<U>()[Is])},
+            obj.[: members_of<U>()[Is] :]), ...);
     }(std::make_index_sequence<N>{});
 }
 
@@ -84,8 +89,8 @@ constexpr void template_for_each_field(F&& fn) {
     using U = std::remove_cvref_t<T>;
     constexpr auto N = field_count_of<U>();
     [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-        (fn.template operator()<typename [: std::meta::type_of(std::meta::nonstatic_data_members_of(^^U, detail::rfl_ctx_for<U>())[Is]) :]> (
-            std::string_view{std::meta::identifier_of(std::meta::nonstatic_data_members_of(^^U, detail::rfl_ctx_for<U>())[Is])}), ...);
+        (fn.template operator()<typename [: std::meta::type_of(members_of<U>()[Is]) :]> (
+            std::string_view{std::meta::identifier_of(members_of<U>()[Is])}), ...);
     }(std::make_index_sequence<N>{});
 }
 
@@ -96,11 +101,12 @@ constexpr auto to_tuple(T&& obj) {
     using U = std::remove_cvref_t<T>;
     constexpr auto N = field_count_of<U>();
     return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-        return std::tie(obj.[: std::meta::nonstatic_data_members_of(^^U, detail::rfl_ctx_for<U>())[Is] :] ...);
+        return std::tie(obj.[: members_of<U>()[Is] :] ...);
     }(std::make_index_sequence<N>{});
 }
 
 template <reflectable_class T, class Tuple>
+    requires std::is_aggregate_v<T>
 constexpr T from_tuple(Tuple&& t) {
     return std::apply(
         [](auto&&... args) -> T { return T{std::forward<decltype(args)>(args)...}; },

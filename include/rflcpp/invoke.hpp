@@ -63,28 +63,28 @@ rflcpp::result<T> coerce_arg(const rflcpp::any& arg, std::string_view method_nam
 
     // 2. Format-agnostic arithmetic coercion
     if constexpr (std::is_arithmetic_v<T>) {
-        #define TRY_CAST(SrcT) \
-            if (arg.type_id() == typeid(SrcT)) { \
-                if (auto* ptr = arg.cast<SrcT>()) { \
-                    return static_cast<T>(*ptr); \
-                } \
-            }
-        TRY_CAST(bool)
-        TRY_CAST(char)
-        TRY_CAST(signed char)
-        TRY_CAST(unsigned char)
-        TRY_CAST(short)
-        TRY_CAST(unsigned short)
-        TRY_CAST(int)
-        TRY_CAST(unsigned int)
-        TRY_CAST(long)
-        TRY_CAST(unsigned long)
-        TRY_CAST(long long)
-        TRY_CAST(unsigned long long)
-        TRY_CAST(float)
-        TRY_CAST(double)
-        TRY_CAST(long double)
-        #undef TRY_CAST
+        using arithmetic_types = std::tuple<
+            bool, char, signed char, unsigned char,
+            short, unsigned short, int, unsigned int,
+            long, unsigned long, long long, unsigned long long,
+            float, double, long double
+        >;
+
+        std::optional<T> coerced_val;
+        [&]<class... SrcTs>(std::tuple<SrcTs...>*) {
+            ([&] {
+                if (coerced_val) return;
+                if (arg.type_id() == typeid(SrcTs)) {
+                    if (auto* ptr = arg.cast<SrcTs>()) {
+                        coerced_val = static_cast<T>(*ptr);
+                    }
+                }
+            }(), ...);
+        }(static_cast<arithmetic_types*>(nullptr));
+
+        if (coerced_val) {
+            return *coerced_val;
+        }
     }
 
     // 3. Format-agnostic string-to-enum coercion

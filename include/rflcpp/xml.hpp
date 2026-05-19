@@ -482,8 +482,8 @@ result<T> read_dispatch(const pugi::xml_node& node, std::string_view path) {
             }
         }
         struct validation_guard {
-            validation_guard() { rflcpp::detail::g_bypass_validation = true; }
-            ~validation_guard() { rflcpp::detail::g_bypass_validation = false; }
+            validation_guard() { rflcpp::detail::g_bypass_validation++; }
+            ~validation_guard() { rflcpp::detail::g_bypass_validation--; }
         } guard;
         U val;
         std::optional<error> failure;
@@ -550,7 +550,7 @@ struct xml_codec<patch_type<T>> {
         constexpr auto N = rflcpp::field_count_of<U>();
         [&]<std::size_t... Is>(std::index_sequence<Is...>) {
             ([&] {
-                constexpr auto member = std::meta::nonstatic_data_members_of(^^U, rflcpp::detail::rfl_ctx_for<U>())[Is];
+                constexpr auto member = rflcpp::members_of<U>()[Is];
                 constexpr auto member_name = std::meta::identifier_of(member);
                 using FT = typename [: std::meta::type_of(member) :];
                 std::string key = rflcpp::detail::serialization::effective_key<U, FT>(member_name);
@@ -580,7 +580,7 @@ struct xml_codec<patch_type<T>> {
         [&]<std::size_t... Is>(std::index_sequence<Is...>) {
             ([&] {
                 if (failure) return;
-                constexpr auto member = std::meta::nonstatic_data_members_of(^^U, rflcpp::detail::rfl_ctx_for<U>())[Is];
+                constexpr auto member = rflcpp::members_of<U>()[Is];
                 constexpr auto member_name = std::meta::identifier_of(member);
                 using FT = typename [: std::meta::type_of(member) :];
                 std::string key = rflcpp::detail::serialization::effective_key<U, FT>(member_name);

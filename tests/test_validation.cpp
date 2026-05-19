@@ -54,3 +54,24 @@ TEST_CASE("validated default constructor validates default value",
     REQUIRE_THROWS_AS(NonEmpty{}, rflcpp::rflcpp_error);
     REQUIRE_NOTHROW(Percent{});
 }
+
+struct InnerVal {
+    Percent score = Percent{50};
+};
+struct OuterVal {
+    Percent score = Percent{50};
+    InnerVal inner;
+};
+
+TEST_CASE("re-entrant validation bypass in nested structs", "[validation][nested][json]") {
+    // Nested deserialization should successfully bypass checks during construction,
+    // and correctly restore validation state afterward.
+    auto res = rflcpp::from_json<OuterVal>("{\"score\": 80, \"inner\": {\"score\": 90}}");
+    REQUIRE(res.has_value());
+    REQUIRE(res->score.get() == 80);
+    REQUIRE(res->inner.score.get() == 90);
+    
+    // Outside deserialization, normal throwing constructor should still throw on invalid values
+    REQUIRE_THROWS_AS(Percent{999}, rflcpp::rflcpp_error);
+}
+

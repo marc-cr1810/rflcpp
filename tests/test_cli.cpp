@@ -36,3 +36,47 @@ TEST_CASE("CLI parser invalid value", "[cli]") {
     auto res = cli::parse<CliConfig>(argc, argv);
     REQUIRE(!res.has_value());
 }
+
+struct CliConfigWithShort {
+    rflcpp::field<"port", int, rflcpp::attrs::short_name<'p'>> port = 8080;
+    rflcpp::field<"host", std::string, rflcpp::attrs::short_name<'o'>> host = std::string("localhost");
+    rflcpp::field<"verbose", bool, rflcpp::attrs::short_name<'v'>> verbose = false;
+};
+
+struct CliConfigStrict {
+    int value = 0;
+};
+template <>
+struct rflcpp::strict_policy<CliConfigStrict> {
+    static constexpr bool strict = true;
+};
+
+TEST_CASE("CLI parser short flags", "[cli]") {
+    char* argv[] = {(char*)"prog", (char*)"-p", (char*)"9000", (char*)"-o", (char*)"example.com", (char*)"-v"};
+    int argc = 6;
+    
+    auto res = cli::parse<CliConfigWithShort>(argc, argv);
+    REQUIRE(res.has_value());
+    REQUIRE(res->port.value == 9000);
+    REQUIRE(res->host.value == "example.com");
+    REQUIRE(res->verbose.value == true);
+}
+
+TEST_CASE("CLI parser short flags with equal", "[cli]") {
+    char* argv[] = {(char*)"prog", (char*)"-p=1234"};
+    int argc = 2;
+    
+    auto res = cli::parse<CliConfigWithShort>(argc, argv);
+    REQUIRE(res.has_value());
+    REQUIRE(res->port.value == 1234);
+}
+
+TEST_CASE("CLI parser strict error on unknown", "[cli]") {
+    char* argv[] = {(char*)"prog", (char*)"--unknown", (char*)"123"};
+    int argc = 3;
+    
+    auto res = cli::parse<CliConfigStrict>(argc, argv);
+    REQUIRE(!res.has_value());
+    REQUIRE(res.error().kind() == error_kind::unknown_field);
+}
+

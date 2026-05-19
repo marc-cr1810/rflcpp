@@ -102,6 +102,10 @@ struct description {};
 template <fixed_string S>
 struct title {};
 
+/// Command-line short flag character.
+template <char C>
+struct short_name {};
+
 } // namespace attrs
 
 namespace detail {
@@ -126,6 +130,24 @@ consteval std::string_view description_for(::rflcpp::attrs::description<S>*) {
 template <fixed_string S>
 consteval std::string_view title_for(::rflcpp::attrs::title<S>*) {
     return S.view();
+}
+
+template <char C>
+consteval char short_name_for(::rflcpp::attrs::short_name<C>*) {
+    return C;
+}
+
+template <class... Attrs>
+consteval char short_name_of() {
+    char out = '\0';
+    (
+        [&]<class A>() {
+            if constexpr (requires(A* p) { short_name_for(p); })
+                out = short_name_for(static_cast<A*>(nullptr));
+        }.template operator()<Attrs>(),
+        ...
+    );
+    return out;
 }
 
 template <class... Attrs>

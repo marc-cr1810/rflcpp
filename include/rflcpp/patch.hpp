@@ -25,7 +25,7 @@ template <class T, std::size_t... Is>
 struct patch_tuple_helper<T, std::index_sequence<Is...>> {
     using U = std::remove_cvref_t<T>;
     using type = std::tuple<std::optional<rflcpp::unwrap_t<typename [: std::meta::type_of(
-        std::meta::nonstatic_data_members_of(^^U, rflcpp::detail::rfl_ctx_for<U>())[Is]) :]>>...>;
+        rflcpp::members_of<U>()[Is]) :]>>...>;
 };
 } // namespace detail
 
@@ -54,7 +54,7 @@ constexpr patch_type_t<T> diff(const T& before, const T& after) {
     
     [&]<std::size_t... Is>(std::index_sequence<Is...>) {
         ([&] {
-            constexpr auto member = std::meta::nonstatic_data_members_of(^^U, rflcpp::detail::rfl_ctx_for<U>())[Is];
+            constexpr auto member = rflcpp::members_of<U>()[Is];
             const auto& b_val = before.[: member :];
             const auto& a_val = after.[: member :];
             
@@ -82,7 +82,7 @@ constexpr void patch(T& target, const patch_type_t<T>& p) {
         ([&] {
             const auto& opt = std::get<Is>(p.values);
             if (opt.has_value()) {
-                constexpr auto member = std::meta::nonstatic_data_members_of(^^U, rflcpp::detail::rfl_ctx_for<U>())[Is];
+                constexpr auto member = rflcpp::members_of<U>()[Is];
                 using FT = typename [: std::meta::type_of(member) :];
                 auto& field_ref = target.[: member :];
                 auto& inner = rflcpp::detail::serialization::unwrap_ref<FT>(field_ref);

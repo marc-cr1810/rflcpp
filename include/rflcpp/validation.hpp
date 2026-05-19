@@ -87,7 +87,7 @@ struct non_empty {
 } // namespace rules
 
 namespace detail {
-inline thread_local bool g_bypass_validation = false;
+inline thread_local int g_bypass_validation = 0;
 }
 
 template <class T, class... Rules>
@@ -152,38 +152,33 @@ template <class T> inline constexpr bool is_validated_v = is_validated<std::remo
 
 namespace detail {
 
-template <class Rule> struct rule_traits {
+template <class Rule> struct rule_traits_base {
     static constexpr std::optional<double> min_v() { return std::nullopt; }
     static constexpr std::optional<double> max_v() { return std::nullopt; }
     static constexpr std::optional<std::size_t> min_l() { return std::nullopt; }
     static constexpr std::optional<std::size_t> max_l() { return std::nullopt; }
 };
 
-template <auto V> struct rule_traits<rules::min_value<V>> {
+template <class Rule>
+struct rule_traits : rule_traits_base<Rule> {};
+
+template <auto V>
+struct rule_traits<rules::min_value<V>> : rule_traits_base<rules::min_value<V>> {
     static constexpr std::optional<double> min_v() { return static_cast<double>(V); }
-    static constexpr std::optional<double> max_v() { return std::nullopt; }
-    static constexpr std::optional<std::size_t> min_l() { return std::nullopt; }
-    static constexpr std::optional<std::size_t> max_l() { return std::nullopt; }
 };
 
-template <auto V> struct rule_traits<rules::max_value<V>> {
-    static constexpr std::optional<double> min_v() { return std::nullopt; }
+template <auto V>
+struct rule_traits<rules::max_value<V>> : rule_traits_base<rules::max_value<V>> {
     static constexpr std::optional<double> max_v() { return static_cast<double>(V); }
-    static constexpr std::optional<std::size_t> min_l() { return std::nullopt; }
-    static constexpr std::optional<std::size_t> max_l() { return std::nullopt; }
 };
 
-template <std::size_t V> struct rule_traits<rules::min_length<V>> {
-    static constexpr std::optional<double> min_v() { return std::nullopt; }
-    static constexpr std::optional<double> max_v() { return std::nullopt; }
+template <std::size_t V>
+struct rule_traits<rules::min_length<V>> : rule_traits_base<rules::min_length<V>> {
     static constexpr std::optional<std::size_t> min_l() { return V; }
-    static constexpr std::optional<std::size_t> max_l() { return std::nullopt; }
 };
 
-template <std::size_t V> struct rule_traits<rules::max_length<V>> {
-    static constexpr std::optional<double> min_v() { return std::nullopt; }
-    static constexpr std::optional<double> max_v() { return std::nullopt; }
-    static constexpr std::optional<std::size_t> min_l() { return std::nullopt; }
+template <std::size_t V>
+struct rule_traits<rules::max_length<V>> : rule_traits_base<rules::max_length<V>> {
     static constexpr std::optional<std::size_t> max_l() { return V; }
 };
 

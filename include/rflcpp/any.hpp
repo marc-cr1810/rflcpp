@@ -132,6 +132,77 @@ struct msgpack_serializer_populator;
 }
 #endif
 
+template <class T> struct is_shared_ptr : std::false_type {};
+template <class T> struct is_shared_ptr<std::shared_ptr<T>> : std::true_type {};
+template <class T> inline constexpr bool is_shared_ptr_v = is_shared_ptr<std::remove_cvref_t<T>>::value;
+
+template <class T> struct is_unique_ptr : std::false_type {};
+template <class T> struct is_unique_ptr<std::unique_ptr<T>> : std::true_type {};
+template <class T> inline constexpr bool is_unique_ptr_v = is_unique_ptr<std::remove_cvref_t<T>>::value;
+
+template <class T, class Enable = void>
+struct smart_ptr_target {
+    using type = T;
+};
+
+template <class T>
+struct smart_ptr_target<T, std::enable_if_t<is_shared_ptr_v<T>>> {
+    using type = typename T::element_type;
+};
+
+template <class T>
+struct smart_ptr_target<T, std::enable_if_t<is_unique_ptr_v<T>>> {
+    using type = typename T::element_type;
+};
+
+template <class Target>
+void register_serializers_once() {
+    static const bool registered = []() {
+#ifdef RFLCPP_ENABLE_JSON
+        json_populator_helper<Target>::populate();
+        if (detail::any::json_serializer_holder<Target>::serialize_fn) {
+            detail::any::any_serializer_registry<detail::any::json_format_tag>::register_type(
+                typeid(Target), detail::any::json_serializer_holder<Target>::serialize_fn
+            );
+        }
+#endif
+#ifdef RFLCPP_ENABLE_XML
+        xml_populator_helper<Target>::populate();
+        if (detail::any::xml_serializer_holder<Target>::serialize_fn) {
+            detail::any::any_serializer_registry<detail::any::xml_format_tag>::register_type(
+                typeid(Target), detail::any::xml_serializer_holder<Target>::serialize_fn
+            );
+        }
+#endif
+#ifdef RFLCPP_ENABLE_YAML
+        yaml_populator_helper<Target>::populate();
+        if (detail::any::yaml_serializer_holder<Target>::serialize_fn) {
+            detail::any::any_serializer_registry<detail::any::yaml_format_tag>::register_type(
+                typeid(Target), detail::any::yaml_serializer_holder<Target>::serialize_fn
+            );
+        }
+#endif
+#ifdef RFLCPP_ENABLE_TOML
+        toml_populator_helper<Target>::populate();
+        if (detail::any::toml_serializer_holder<Target>::serialize_fn) {
+            detail::any::any_serializer_registry<detail::any::toml_format_tag>::register_type(
+                typeid(Target), detail::any::toml_serializer_holder<Target>::serialize_fn
+            );
+        }
+#endif
+#ifdef RFLCPP_ENABLE_MSGPACK
+        msgpack_populator_helper<Target>::populate();
+        if (detail::any::msgpack_serializer_holder<Target>::serialize_fn) {
+            detail::any::any_serializer_registry<detail::any::msgpack_format_tag>::register_type(
+                typeid(Target), detail::any::msgpack_serializer_holder<Target>::serialize_fn
+            );
+        }
+#endif
+        return true;
+    }();
+    (void)registered;
+}
+
 class any {
 public:
     any() : ptr_(nullptr), vtable_(nullptr) {}
@@ -140,53 +211,18 @@ public:
         requires (!std::is_same_v<std::decay_t<T>, any>)
     any(T&& val) {
         using U = std::decay_t<T>;
-        ptr_ = std::make_shared<U>(std::forward<T>(val));
-        vtable_ = detail::any::get_vtable<U>();
-        
-#ifdef RFLCPP_ENABLE_JSON
-        json_populator_helper<U>::populate();
-        if (detail::any::json_serializer_holder<U>::serialize_fn) {
-            detail::any::any_serializer_registry<detail::any::json_format_tag>::register_type(
-                typeid(U), detail::any::json_serializer_holder<U>::serialize_fn
-            );
-        }
-#endif
+        using Target = typename smart_ptr_target<U>::type;
 
-#ifdef RFLCPP_ENABLE_XML
-        xml_populator_helper<U>::populate();
-        if (detail::any::xml_serializer_holder<U>::serialize_fn) {
-            detail::any::any_serializer_registry<detail::any::xml_format_tag>::register_type(
-                typeid(U), detail::any::xml_serializer_holder<U>::serialize_fn
-            );
+        if constexpr (is_shared_ptr_v<U>) {
+            ptr_ = std::static_pointer_cast<void>(std::forward<T>(val));
+        } else if constexpr (is_unique_ptr_v<U>) {
+            ptr_ = std::shared_ptr<typename U::element_type>(std::forward<T>(val));
+        } else {
+            ptr_ = std::make_shared<U>(std::forward<T>(val));
         }
-#endif
 
-#ifdef RFLCPP_ENABLE_YAML
-        yaml_populator_helper<U>::populate();
-        if (detail::any::yaml_serializer_holder<U>::serialize_fn) {
-            detail::any::any_serializer_registry<detail::any::yaml_format_tag>::register_type(
-                typeid(U), detail::any::yaml_serializer_holder<U>::serialize_fn
-            );
-        }
-#endif
-
-#ifdef RFLCPP_ENABLE_TOML
-        toml_populator_helper<U>::populate();
-        if (detail::any::toml_serializer_holder<U>::serialize_fn) {
-            detail::any::any_serializer_registry<detail::any::toml_format_tag>::register_type(
-                typeid(U), detail::any::toml_serializer_holder<U>::serialize_fn
-            );
-        }
-#endif
-
-#ifdef RFLCPP_ENABLE_MSGPACK
-        msgpack_populator_helper<U>::populate();
-        if (detail::any::msgpack_serializer_holder<U>::serialize_fn) {
-            detail::any::any_serializer_registry<detail::any::msgpack_format_tag>::register_type(
-                typeid(U), detail::any::msgpack_serializer_holder<U>::serialize_fn
-            );
-        }
-#endif
+        vtable_ = detail::any::get_vtable<Target>();
+        register_serializers_once<Target>();
     }
 
     [[nodiscard]] bool empty() const noexcept { return ptr_ == nullptr; }
